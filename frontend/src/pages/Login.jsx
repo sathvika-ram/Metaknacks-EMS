@@ -42,7 +42,7 @@ export default function Login() {
               <p className="login-kicker">Trusted civic operations</p>
               <h1>Every leader needs a strong system.</h1>
               <p className="login-quote">
-                “Democracy grows stronger when every citizen is heard, counted, and represented.”
+                &#8220;Democracy grows stronger when every citizen is heard, counted, and represented.&#8221;
               </p>
             </div>
           </div>
@@ -52,7 +52,7 @@ export default function Login() {
           <div className="login-card">
             <div className="login-card__header">
               <div className="login-card__logo-wrap">
-                <img src="/parl.jfif" alt="Rakesh Reddy" className="login-card__logo" />
+                <img src="/ktr.jpg" alt="KTR" className="login-card__logo" />
               </div>
               <p className="login-eyebrow">Secure access</p>
               <h2>Sign in to your workspace</h2>
