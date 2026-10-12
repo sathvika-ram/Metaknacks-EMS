@@ -25,7 +25,9 @@ export default function Login() {
         navigate('/coordinator');
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to login');
+      setError(err.response
+        ? err.response.data?.error || 'Failed to login'
+        : 'Unable to reach the backend. Check the Vercel API URL and Render frontend origin.');
     } finally {
       setLoading(false);
     }

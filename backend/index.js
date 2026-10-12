@@ -21,7 +21,11 @@ const allowedOrigins = Array.from(new Set([
     'http://127.0.0.1:5174',
     ...String(process.env.FRONTEND_URL || '')
         .split(',')
-        .map(origin => origin.trim().replace(/\/$/, ''))
+        .map(origin => {
+            const value = origin.trim().replace(/\/$/, '');
+            if (!value) return '';
+            return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+        })
         .filter(Boolean)
 ]));
 app.use(cors({ origin: allowedOrigins }));
