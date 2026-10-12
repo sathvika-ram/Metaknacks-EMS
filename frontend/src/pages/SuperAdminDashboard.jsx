@@ -1,0 +1,444 @@
+﻿import { useEffect, useRef, useState } from 'react';
+import axios from 'axios';
+import * as XLSX from 'xlsx';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Activity, BarChart3, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, FileSpreadsheet, LayoutDashboard, LogOut, Map, Menu, RefreshCw, ShieldCheck, Users, X } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { API } from '../utils/api';
+
+const inputClass = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-teal-600 focus:ring-4 focus:ring-teal-600/10';
+const normalizeGeographyName = (value) => {
+  const text = String(value ?? '').trim();
+  if (!text) return text;
+  const aliases = { bhupalpalle: 'Bhupalpally', bhupalapalle: 'Bhupalpally', bhupalpally: 'Bhupalpally' };
+  return aliases[text.toLowerCase()] || text;
+};
+const navItems = [
+  { id: 'overview', label: 'Analytic Overview', icon: LayoutDashboard },
+  { id: 'coordinators', label: 'Field Coordinators', icon: Users },
+  { id: 'audit', label: 'System Audit Logs', icon: ShieldCheck }
+];
+
+export default function SuperAdminDashboard() {
+  const { user, logout } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const liveRequestRef = useRef(null);
+  const [overview, setOverview] = useState({ metrics: {}, regional_breakdown: [] });
+  const [coordinators, setCoordinators] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const auditLogRef = useRef(null);
+  const [regions, setRegions] = useState([]);
+  const [constituencies, setConstituencies] = useState([]);
+  const [mandals, setMandals] = useState([]);
+  const [filters, setFilters] = useState({ region: '', constituency: '', mandal: '', status: '' });
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [exportingConstituencyCounts, setExportingConstituencyCounts] = useState(false);
+  const [exportFromDate, setExportFromDate] = useState('');
+  const [exportToDate, setExportToDate] = useState('');
+  const [error, setError] = useState('');
+  const requestedView = location.pathname.split('/')[2] || 'analytics';
+  const routeView = requestedView === 'analytics' ? 'overview' : requestedView;
+  const active = ['overview', 'coordinators', 'audit', 'audit-logs'].includes(routeView) ? routeView : 'overview';
+
+  const loadLiveData = async (silent = false) => {
+    liveRequestRef.current?.abort();
+    const controller = new AbortController();
+    liveRequestRef.current = controller;
+    if (!silent) setLoading(true);
+    try {
+      const requestParams = { region: filters.region, constituency: filters.constituency, mandal: filters.mandal, status: filters.status };
+      const summary = await axios.get(`${API}/admin/summary`, { params: requestParams, signal: controller.signal });
+      setOverview(summary.data); setError('');
+    } catch (err) { if (!axios.isCancel(err)) setError(err.response?.data?.error || 'Unable to connect to the admin control center.'); }
+    finally {
+      if (liveRequestRef.current === controller) {
+        liveRequestRef.current = null;
+        if (!silent) setLoading(false);
+      }
+    }
+  };
+
+  const loadReferenceData = async () => {
+    try {
+      const [coordinatorResult, auditResult, regionResult] = await Promise.all([
+        axios.get(`${API}/admin/coordinators`),
+        axios.get(`${API}/admin/audit-logs`),
+        axios.get(`${API}/geo/regions`)
+      ]);
+      setCoordinators(coordinatorResult.data.coordinators || []);
+      setLogs(auditResult.data.logs || []);
+      setRegions(regionResult.data || []);
+    } catch (err) { setError(err.response?.data?.error || 'Unable to load dashboard reference data.'); }
+  };
+
+  const load = async () => {
+    await Promise.all([loadLiveData(), loadReferenceData()]);
+  };
+
+  useEffect(() => {
+    loadLiveData();
+    const refreshVisibleDashboard = () => {
+      if (document.visibilityState === 'visible') loadLiveData(true);
+    };
+    const timer = setInterval(refreshVisibleDashboard, 30000);
+    document.addEventListener('visibilitychange', refreshVisibleDashboard);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisibleDashboard);
+    };
+  }, [filters.region, filters.constituency, filters.mandal, filters.status]);
+  useEffect(() => () => liveRequestRef.current?.abort(), []);
+  useEffect(() => { loadReferenceData(); }, []);
+
+  useEffect(() => {
+    setFilters(current => ({ ...current, constituency: '', mandal: '' }));
+    setMandals([]);
+    axios.get(`${API}/geo/assemblies`, { params: filters.region ? { region: filters.region } : {} })
+      .then(result => setConstituencies((result.data || []).map(item => ({
+        ...item,
+        assembly_constituency: normalizeGeographyName(item.assembly_constituency)
+      }))))
+      .catch(() => setError('Unable to load constituencies.'));
+  }, [filters.region]);
+
+  useEffect(() => {
+    const normalizedConstituency = String(filters.constituency || '').trim();
+    if (!normalizedConstituency) { setMandals([]); return; }
+    setFilters(current => ({ ...current, mandal: '' }));
+    axios.get(`${API}/geo/mandals`, { params: { constituency: normalizedConstituency } })
+      .then(result => setMandals(Array.isArray(result.data) ? result.data.map(item => {
+        const next = typeof item === 'string' ? { mandal: item } : item;
+        return { ...next, mandal: normalizeGeographyName(next.mandal) };
+      }) : []))
+      .catch(() => setError('Unable to load mandals.'));
+  }, [filters.constituency]);
+
+  const metrics = overview.metrics || {};
+  const exportData = async (applyDateRange = false) => {
+    if (exporting) return;
+    if (applyDateRange && exportFromDate && exportToDate && exportFromDate > exportToDate) {
+      setError('The start date must be before or equal to the end date.');
+      return;
+    }
+    setExporting(true);
+    try {
+      const params = {
+        region: filters.region,
+        constituency: filters.constituency,
+        mandal: filters.mandal,
+        status: filters.status,
+        limit: 100
+      };
+      const allRows = [];
+      let cursor = null;
+      do {
+        const result = await axios.get(`${API}/admin/enrollments`, { params: { ...params, ...(cursor ? { cursor } : {}) } });
+        allRows.push(...(result.data.voters || []));
+        const pagination = result.data.pagination || {};
+        if (pagination.has_more && !pagination.next_cursor) throw new Error('The export could not retrieve the next page.');
+        cursor = pagination.next_cursor || null;
+      } while (cursor);
+
+      const workbook = XLSX.utils.book_new();
+      const dateFilteredRows = applyDateRange ? allRows.filter(row => {
+        const enrollmentDate = toLocalDateKey(row.created_at);
+        return (!exportFromDate || enrollmentDate >= exportFromDate) && (!exportToDate || enrollmentDate <= exportToDate);
+      }) : allRows;
+      const sanitizedRows = dateFilteredRows.map(row => {
+        const next = { ...row };
+        delete next.coordinator_id;
+        delete next.degree_certificate_url;
+        delete next.degree_certificate_urls;
+        delete next.photo_url;
+        delete next.created_at;
+        delete next.updated_at;
+        delete next.citizenship_status;
+        delete next.nationality;
+        delete next.degree_qualification;
+        delete next.graduation_year;
+        delete next.state;
+        delete next.polling_station;
+        delete next.ps_si_number;
+        delete next.ward;
+        delete next.district;
+        return next;
+      });
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(sanitizedRows), 'Enrollments');
+      XLSX.writeFile(workbook, `kingmayker-enrollments-${filters.region || 'all-regions'}.xlsx`);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Unable to export all matching enrollments.');
+    } finally {
+      setExporting(false);
+    }
+  };
+  const exportConstituencyCounts = async () => {
+    if (exportingConstituencyCounts || !constituencies.length) return;
+    setExportingConstituencyCounts(true);
+    try {
+      const rows = [];
+      for (let index = 0; index < constituencies.length; index += 4) {
+        const batch = await Promise.all(constituencies.slice(index, index + 4).map(async item => {
+          const result = await axios.get(`${API}/admin/summary`, {
+            params: { ...(filters.region ? { region: filters.region } : {}), constituency: item.assembly_constituency }
+          });
+          const summary = result.data || {};
+          const today = summary.daily_trend?.find(day => String(day.day).slice(0, 10) === toLocalDateKey(new Date()))?.count || 0;
+          return {
+            Constituency: item.assembly_constituency,
+            'Total Enrolled': Number(summary.metrics?.total || 0),
+            Approved: Number(summary.metrics?.approved || 0),
+            "Today's Velocity": Number(today)
+          };
+        }));
+        rows.push(...batch);
+      }
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      worksheet['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 14 }, { wch: 20 }];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Constituency Counts');
+      const regionName = filters.region || 'all-regions';
+      XLSX.writeFile(workbook, `constituency-counts-${regionName.toLowerCase().replace(/\s+/g, '-')}.xlsx`);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Unable to export constituency counts.');
+    } finally {
+      setExportingConstituencyCounts(false);
+    }
+  };
+  const go = id => { const path = id === 'overview' ? 'analytics' : id === 'audit' ? 'audit-logs' : id; navigate(`/admin/${path}`); setMobileOpen(false); };
+  const filteredMetrics = {
+    total: Number(metrics.total || 0),
+    pending: Number(metrics.pending || 0),
+    approved: Number(metrics.approved || 0),
+    rejected: Number(metrics.rejected || 0),
+    active_coordinators: metrics.active_coordinators || 0
+  };
+  const visibleLogs = logs.filter(log => !['user_login', 'user_logout'].includes(String(log.action || '').toLowerCase()));
+  const scrollAudit = direction => {
+    const container = auditLogRef.current;
+    if (!container) return;
+    const step = Math.max(container.clientHeight * 0.8, 180);
+    container.scrollBy({ top: direction === 'down' ? step : -step, behavior: 'smooth' });
+  };
+  const handleAuditScroll = () => {
+    const container = auditLogRef.current;
+    if (!container) return;
+    setShowScrollTop(container.scrollTop > 120);
+  };
+
+  return <div data-admin-view={active} className="min-h-screen bg-[#f4f7f8] text-slate-900">
+    <header className="sticky top-0 z-30 flex h-[82px] items-center justify-between border-b border-slate-200 bg-white/95 px-4 shadow-[0_10px_30px_rgba(15,36,30,0.06)] backdrop-blur sm:px-6"><div className="flex items-center gap-3"><button onClick={() => setMobileOpen(true)} className="rounded-lg p-2 text-slate-600 lg:hidden" aria-label="Open navigation"><Menu size={20} /></button><img src="/rakeshreddy.png" alt="EMS by Metaknacks" className="h-11 w-11 rounded-xl object-cover ring-2 ring-slate-200" /><div className="flex flex-col"><div className="app-brand-wrap"><p className="app-brand-text app-brand-desktop admin-brand-desktop">EMS BY METAKNACKS</p><p className="app-brand-text app-brand-mobile admin-brand-mobile">EMS BY METAKNACKS</p></div><h1 className="dashboard-page-title admin-page-title">ADMIN 360</h1></div></div><div className="flex items-center gap-3"><span className="hidden text-sm font-semibold text-slate-600 sm:block">{user?.name || 'Super Admin'}</span><button onClick={logout} className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100" title="Sign out" aria-label="Sign out"><LogOut size={18} /></button></div></header>
+    <div className="flex">
+      {mobileOpen && <button className="fixed inset-0 z-30 bg-slate-950/30 backdrop-blur-sm lg:hidden" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
+      <aside className={`${mobileOpen ? 'translate-x-0' : '-translate-x-full'} ${collapsed ? 'lg:w-[76px]' : 'lg:w-[264px]'} fixed inset-y-0 left-0 z-40 mt-[82px] flex w-[280px] flex-col border-r border-slate-800 bg-[#172a3d] p-4 text-white transition-all lg:sticky lg:top-[82px] lg:mt-0 lg:h-[calc(100vh-82px)] lg:translate-x-0`}><div className="mb-8 flex items-center justify-between"><div className={collapsed ? 'lg:hidden' : ''}><p className="admin-sidebar-brand text-base font-black tracking-[0.14em]">EMS BY METAKNACKS</p><span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">System Control Center</span></div><button onClick={() => setCollapsed(!collapsed)} className="hidden rounded-lg p-2 text-slate-200 hover:bg-white/10 lg:block" aria-label="Collapse sidebar">{collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}</button><button onClick={() => setMobileOpen(false)} className="lg:hidden" aria-label="Close navigation"><X size={19} /></button></div><nav className="space-y-1">{navItems.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => go(id)} title={collapsed ? label : undefined} className={`admin-nav-item flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-semibold transition ${active === id ? 'bg-teal-500 text-white shadow-lg shadow-teal-950/20' : 'text-slate-200 hover:bg-teal-700 hover:text-white'}`}><Icon size={18} /><span className={collapsed ? 'lg:hidden' : ''}>{label}</span></button>)}</nav><div className={`${collapsed ? 'lg:hidden' : ''} mt-auto rounded-xl border border-white/10 bg-white/5 p-4`}><div className="flex items-center gap-2 text-xs font-semibold text-slate-200"><Activity size={15} className="text-teal-300" /> Live system feed</div><p className="mt-2 text-xs leading-5 text-slate-300">Enrollment data refreshes every 30 seconds while this tab is active.</p></div></aside>
+      <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-[1500px] space-y-8">{error && <div className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error"><X size={16} /></button></div>}
+        <section id="overview" className="scroll-mt-24"><PageHeading eyebrow="Executive command center" title="Analytic Overview" detail="A live operational view of enrollment coverage, verification, and field capacity." action={<div className="flex flex-wrap items-center gap-2"><button onClick={load} title="Refresh data" aria-label="Refresh data" className="rounded-lg border border-slate-300 bg-white p-2.5 text-teal-800 transition hover:bg-teal-50"><RefreshCw size={17} className={loading ? 'animate-spin' : ''} /></button><label className="flex items-center gap-1 text-xs font-semibold text-slate-600">From<input type="date" value={exportFromDate} onChange={event => setExportFromDate(event.target.value)} aria-label="Export start date" className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-700" /></label><label className="flex items-center gap-1 text-xs font-semibold text-slate-600">To<input type="date" value={exportToDate} onChange={event => setExportToDate(event.target.value)} aria-label="Export end date" className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-700" /></label><button onClick={exportConstituencyCounts} disabled={exportingConstituencyCounts || !constituencies.length} className="flex items-center gap-2 rounded-lg border border-teal-700 bg-white px-4 py-2.5 text-sm font-semibold text-teal-800 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"><FileSpreadsheet size={17} /> {exportingConstituencyCounts ? 'Preparing counts...' : 'Constituency counts XLS'}</button><button onClick={() => exportData(true)} disabled={exporting} className="flex items-center gap-2 rounded-lg bg-[#173b35] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0f2f2a] disabled:cursor-not-allowed disabled:opacity-50"><Download size={17} /> {exporting ? 'Exporting...' : 'Selected geography XLS'}</button></div>} /><Panel className="mt-5"><div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-600"><Map size={16} /> Executive filters</div><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><select className={inputClass} value={filters.region} onChange={event => setFilters({ ...filters, region: event.target.value, constituency: '', mandal: '' })}><option value="">All Regions</option>{regions.map(item => <option key={item.region} value={item.region}>{item.region}</option>)}</select><select className={inputClass} value={filters.constituency} onChange={event => setFilters({ ...filters, constituency: event.target.value, mandal: '' })}><option value="">Select constituency</option>{constituencies.map(item => <option key={`${item.ac_no}-${item.assembly_constituency}`} value={item.assembly_constituency}>{item.assembly_constituency}</option>)}</select><select className={inputClass} value={filters.mandal} onChange={event => setFilters({ ...filters, mandal: event.target.value })} disabled={!filters.constituency}><option value="">Select mandal</option>{mandals.map(item => <option key={item.mandal} value={item.mandal}>{item.mandal}</option>)}</select><select className={inputClass} value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value })}><option value="">All Statuses</option><option value="approved">Approved</option><option value="pending">Pending</option><option value="rejected">Rejected</option></select></div><div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Total enrollments" value={filteredMetrics.total} icon={<BarChart3 size={19} />} tone="teal" /><Metric label="Pending review" value={filteredMetrics.pending} icon={<Clock3 size={19} />} tone="amber" /><Metric label="Approved" value={filteredMetrics.approved} icon={<CheckCircle2 size={19} />} tone="green" /><Metric label="Active coordinators" value={filteredMetrics.active_coordinators} icon={<Users size={19} />} tone="blue" /></div><div className="mt-6"><Panel title="Status mix" detail="Current filtered enrollment pipeline"><StatusDonut metrics={filteredMetrics} /></Panel></div></Panel></section>
+        <section id="coordinators" className="scroll-mt-24"><PageHeading eyebrow="Field operations" title="Coordinator Manager" detail={`${coordinators.length} constituency accounts provisioned in the system.`} /><Panel><InlineCoordinatorForm onCreated={load} /><CoordinatorPasswordReset /><div className="max-h-[280px] overflow-y-auto rounded-lg border border-slate-200"><div className="min-w-[520px]"><div className="grid grid-cols-[1.4fr_1.5fr_0.8fr] gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500"><span>Agent</span><span>Assigned access</span><span className="text-right">Enrollments</span></div>{coordinators.map(coordinator => <div key={coordinator.id} className="grid grid-cols-[1.4fr_1.5fr_0.8fr] gap-4 border-b border-slate-100 px-4 py-3 text-sm last:border-0"><div className="min-w-0"><p className="truncate font-semibold text-slate-900">{coordinator.name}</p><p className="truncate text-xs text-teal-700">{coordinator.email}</p></div><p className="truncate text-xs text-slate-500">{coordinator.assigned_region || 'All regions'} / {coordinator.assigned_constituency || 'All constituencies'}</p><p className="text-right font-bold text-teal-700">{Number(coordinator.total_enrollments || 0).toLocaleString()}</p></div>)}{!coordinators.length && <Empty loading={loading} label="No coordinators provisioned." />}</div></div></Panel></section>
+        <section id="audit" className="scroll-mt-24"><PageHeading eyebrow="Governance" title="System Audit Logs" detail="A transparent activity stream for provisioning and enrollment actions." /><Panel><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><span className="text-xs font-medium text-slate-500">Know Others Activity</span><div className="flex flex-wrap items-center justify-end gap-2"><button type="button" onClick={() => scrollAudit('up')} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:text-teal-700">Scroll up</button><button type="button" onClick={() => scrollAudit('down')} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:text-teal-700">Scroll down</button></div></div><div ref={auditLogRef} onScroll={handleAuditScroll} className="max-h-[500px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50"><table className="min-w-full border-separate border-spacing-0 text-left"><thead className="sticky top-0 z-10 bg-slate-100 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500"><tr><th className="px-4 py-3 text-left">Time</th><th className="px-4 py-3 text-left">Action</th><th className="px-4 py-3 text-left">User</th><th className="px-4 py-3 text-left">Details</th></tr></thead><tbody>{visibleLogs.map(log => <tr key={log.id} className="border-t border-slate-200 bg-white/70 align-top transition hover:bg-slate-50"><td className="px-4 py-3 text-xs text-slate-500"><time>{new Date(log.timestamp).toLocaleString()}</time></td><td className="px-4 py-3"><strong className="text-sm font-semibold text-slate-900">{log.action}</strong></td><td className="px-4 py-3 text-sm text-slate-700"><p>{log.user_name || 'System'}</p><p className="mt-1 text-[11px] uppercase tracking-wide text-slate-400">{log.role || 'system'}</p></td><td className="px-4 py-3 text-xs leading-5 text-slate-500"><p className="break-words">{typeof log.details === 'object' ? JSON.stringify(log.details) : log.details || 'No additional details'}</p></td></tr>)}{!visibleLogs.length && <tr><td colSpan="4"><Empty loading={loading} label="No activity recorded." /></td></tr>}</tbody></table>{showScrollTop && <div className="flex justify-end border-t border-slate-200 bg-white p-3"><button type="button" onClick={() => auditLogRef.current?.scrollTo({ top: 0, behavior: 'smooth' })} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:text-teal-700">Scroll to top</button></div>}</div></Panel></section>
+      </div></main></div></div>;
+}
+
+function InlineCoordinatorForm({ onCreated }) {
+  const emptyForm = { name: '', mobile_number: '', temp_password: '', email: '', assigned_region: '', assigned_constituency: '', assigned_mandal: '', agent_personal_email: '' };
+  const [formData, setFormData] = useState(emptyForm);
+  const [constituencies, setConstituencies] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [mandals, setMandals] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    axios.get(`${API}/geo/assemblies`)
+      .then(response => setConstituencies((response.data || []).map(item => ({
+        ...item,
+        assembly_constituency: normalizeGeographyName(item.assembly_constituency)
+      }))))
+      .catch(() => setError('Failed to load constituencies.'));
+    axios.get(`${API}/geo/regions`)
+      .then(response => setRegions(response.data || []))
+      .catch(() => setError('Failed to load regions.'));
+  }, []);
+
+  const handleChange = (event) => {
+    const field = event.target.name;
+    let value = event.target.value;
+    if (field === 'name') value = value.replace(/[^a-zA-Z\s'-]/g, '').replace(/\s+/g, ' ').toUpperCase();
+    if (field === 'mobile_number') value = value.replace(/\D/g, '').slice(0, 10);
+    if (field === 'email' || field === 'agent_personal_email') value = value.toLowerCase();
+    const next = { ...formData, [field]: value };
+
+    if (field === 'assigned_region') {
+      next.assigned_constituency = value === 'All' ? 'All' : (next.assigned_constituency === 'All' ? '' : next.assigned_constituency);
+      next.assigned_mandal = '';
+      setMandals([]);
+    }
+    if (field === 'assigned_constituency') {
+      const normalized = String(value || '').trim();
+      if (normalized === 'All') {
+        next.assigned_region = 'All';
+        next.assigned_mandal = '';
+        setMandals([]);
+      }
+      const selected = constituencies.find(item => String(item.assembly_constituency || '').trim() === normalized);
+      if (normalized !== 'All') next.assigned_region = selected?.region || '';
+      next.assigned_mandal = '';
+      setMandals([]);
+
+      if (normalized) {
+        axios.get(`${API}/geo/mandals`, { params: { constituency: normalized } })
+          .then(response => setMandals(Array.isArray(response.data) ? response.data.map(item => {
+            const next = typeof item === 'string' ? { mandal: item } : item;
+            return { ...next, mandal: normalizeGeographyName(next.mandal) };
+          }) : []))
+          .catch(() => setError('Failed to load mandals.'));
+      }
+    }
+
+    setFormData(next);
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setError('');
+    setSuccess('');
+
+    if (!formData.name || !/^[A-Za-z]+(?:[ '\-][A-Za-z]+)*$/.test(formData.name) || !/^\d{10}$/.test(formData.mobile_number) || !formData.temp_password || !formData.email || !/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(formData.email) || !formData.assigned_region || !formData.assigned_constituency) {
+      setError('Enter a full name in capitals, a valid 10-digit mobile number, lowercase email, password, region, and constituency.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      await axios.post(`${API}/admin/create-coordinator`, {
+        ...formData,
+        generated_login_email: formData.email
+      });
+      setSuccess('Coordinator created successfully.');
+      setFormData(emptyForm);
+      setMandals([]);
+      onCreated?.();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to create coordinator account.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <div className="mb-4">
+        <h3 className="text-base font-bold text-slate-900">Add coordinator</h3>
+        <p className="mt-1 text-xs text-slate-500">Create a new constituency access account.</p>
+      </div>
+
+      {error && <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      {success && <div className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</div>}
+
+      <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Full name <span className="text-red-500">*</span></label>
+          <input type="text" name="name" required value={formData.name} onChange={handleChange} className={`${inputClass} uppercase`} placeholder="e.g. RAMESH KUMAR" />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Login email <span className="text-red-500">*</span></label>
+          <input type="email" name="email" required value={formData.email} onChange={handleChange} className={inputClass} placeholder="agent@example.com" />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Assigned region <span className="text-red-500">*</span></label>
+          <select name="assigned_region" required value={formData.assigned_region} onChange={handleChange} className={inputClass}><option value="">Select region</option><option value="All">All regions</option>{regions.map(item => <option key={item.region} value={item.region}>{item.region}</option>)}</select>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Mobile number <span className="text-red-500">*</span></label>
+          <input type="tel" name="mobile_number" required pattern="[0-9]{10}" inputMode="numeric" maxLength="10" value={formData.mobile_number} onChange={handleChange} className={inputClass} placeholder="10-digit mobile number" />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Temporary password <span className="text-red-500">*</span></label>
+          <input type="text" name="temp_password" required value={formData.temp_password} onChange={handleChange} className={inputClass} placeholder="e.g. Temp@123" />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Assigned constituency <span className="text-red-500">*</span></label>
+          <select name="assigned_constituency" required value={formData.assigned_constituency} onChange={handleChange} className={inputClass}>
+            <option value="">Select constituency</option><option value="All">All constituencies</option>
+            {constituencies.filter(item => !formData.assigned_region || formData.assigned_region === 'All' || item.region === formData.assigned_region).map(item => <option key={`${item.ac_no}-${item.assembly_constituency}`} value={item.assembly_constituency}>{item.assembly_constituency} ({item.region})</option>)}
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Agent personal email ID</label>
+          <input type="email" name="agent_personal_email" value={formData.agent_personal_email} onChange={handleChange} className={inputClass} placeholder="agent@example.com" />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Assigned mandal</label>
+          <select name="assigned_mandal" value={formData.assigned_mandal} onChange={handleChange} disabled={!formData.assigned_constituency} className={inputClass}>
+            <option value="">Select mandal</option>
+            {mandals.map(item => <option key={item.mandal} value={item.mandal}>{item.mandal}</option>)}
+          </select>
+        </div>
+
+        <div className="md:col-span-2 flex justify-end">
+          <button type="submit" disabled={loading} className="rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-teal-400 text-white">
+            {loading ? 'Creating…' : 'Create coordinator'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+function CoordinatorPasswordReset() {
+  const [email, setEmail] = useState('agent@kingmayker.com');
+  const [newPassword, setNewPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const reset = async event => {
+    event.preventDefault();
+    setMessage(''); setError('');
+    if (newPassword.length < 8) {
+      setError('New password must be at least 8 characters.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await axios.post(`${API}/admin/coordinators/reset-password`, { email: email.toLowerCase(), new_password: newPassword });
+      setMessage(`${response.data.email}: password reset successfully.`);
+      setNewPassword('');
+    } catch (requestError) {
+      setError(requestError.response?.data?.error || 'Unable to reset password.');
+    } finally { setLoading(false); }
+  };
+  return <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4"><h3 className="text-base font-bold text-slate-900">Reset agent password</h3><form onSubmit={reset} className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto]"><input type="email" required value={email} onChange={event => setEmail(event.target.value.toLowerCase())} className={inputClass} placeholder="agent@kingmayker.com" aria-label="Agent login email" /><div className="relative"><input type={showPassword ? 'text' : 'password'} required minLength="8" value={newPassword} onChange={event => setNewPassword(event.target.value)} className={`${inputClass} pr-10`} placeholder="New password (8+ characters)" aria-label="New password" /><button type="button" onClick={() => setShowPassword(current => !current)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-500 hover:bg-slate-100" aria-label={showPassword ? 'Hide password' : 'Show password'} title={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? 'Hide' : 'Show'}</button></div><button type="submit" disabled={loading} className="rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{loading ? 'Updating...' : 'Update password'}</button></form>{message && <p className="mt-3 break-all text-sm font-semibold text-emerald-700">{message}</p>}{error && <p className="mt-3 text-sm text-red-700">{error}</p>}<p className="mt-2 text-xs text-amber-800">Enter the agent login email and new password to replace the existing password.</p></div>;
+}
+function PageHeading({ eyebrow, title, detail, action }) { return <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-700">{eyebrow}</p><h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{title}</h2><p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">{detail}</p></div>{action}</div>; }
+function Panel({ title, detail, children, className = '' }) { return <div className={`rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 ${className}`}>{title && <div className="mb-5"><h3 className="font-bold text-slate-900">{title}</h3>{detail && <p className="mt-1 text-xs text-slate-500">{detail}</p>}</div>}{children}</div>; }
+function AuditLog({ log }) { return <div className="grid gap-2 border-b border-slate-100 px-2 py-4 last:border-0 md:grid-cols-[1.2fr_1.2fr_1fr_2fr] md:gap-4"><div><p className="text-xs font-semibold text-slate-900 md:hidden">Time</p><time className="text-xs text-slate-500">{new Date(log.timestamp).toLocaleString()}</time></div><div><p className="text-xs font-semibold text-slate-900 md:hidden">Action</p><strong className="text-sm text-slate-900">{log.action}</strong></div><div><p className="text-xs font-semibold text-slate-900 md:hidden">User</p><p className="text-sm text-slate-700">{log.user_name || 'System'}</p><p className="text-xs text-slate-400">{log.role || 'system'}</p></div><div className="min-w-0"><p className="text-xs font-semibold text-slate-900 md:hidden">Details</p><p className="break-words text-xs leading-5 text-slate-500">{typeof log.details === 'object' ? JSON.stringify(log.details) : log.details || 'No additional details'}</p></div></div>; }
+function Metric({ label, value, icon, tone }) { const tones = { teal: 'bg-teal-50 text-teal-700', amber: 'bg-amber-50 text-amber-700', green: 'bg-green-50 text-green-700', blue: 'bg-blue-50 text-blue-700' }; return <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span><span className={`rounded-lg p-2 ${tones[tone]}`}>{icon}</span></div><p className="mt-5 text-3xl font-bold tracking-tight text-slate-950">{Number(value).toLocaleString()}</p></div>; }
+function StatusDonut({ metrics }) { const total = Number(metrics.total) || 0; const approved = Number(metrics.approved) || 0; const pending = Number(metrics.pending) || 0; const rejected = Number(metrics.rejected) || 0; const approvedPct = total ? approved / total * 100 : 0; const pendingPct = total ? pending / total * 100 : 0; return <div className="flex flex-wrap items-center justify-center gap-7"><div className="grid h-40 w-40 place-items-center rounded-full" style={{ background: `conic-gradient(#0f766e 0 ${approvedPct}%, #d97706 ${approvedPct}% ${approvedPct + pendingPct}%, #dc2626 ${approvedPct + pendingPct}% 100%)` }}><div className="grid h-24 w-24 place-items-center rounded-full bg-white"><strong className="text-2xl">{total.toLocaleString()}</strong><span className="text-[10px] uppercase text-slate-400">total</span></div></div><div className="space-y-3 text-sm"><Legend color="bg-teal-600" label="Approved" value={approved} /><Legend color="bg-amber-500" label="Pending" value={pending} /><Legend color="bg-red-600" label="Rejected" value={rejected} /></div></div>; }
+function Legend({ color, label, value }) { return <div className="flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${color}`} /><span className="text-slate-600">{label}</span><strong className="ml-2 text-slate-900">{value.toLocaleString()}</strong></div>; }
+function Empty({ loading, label }) { return <div className="w-full py-10 text-center text-sm text-slate-500">{loading ? 'Loading live data...' : label}</div>; }
+
+function getLoginEmail(name, constituency) {
+  const firstName = String(name || '').trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+  const area = String(constituency || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return firstName && area ? `${firstName}.${area}@kingmayker.com` : '';
+}
+function toLocalDateKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}

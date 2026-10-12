@@ -1,0 +1,100 @@
+import { createContext, useContext, useState, useEffect } from 'react';
+import axios from 'axios';
+import { jwtDecode } from 'jwt-decode';
+import { API } from '../utils/api';
+import { clearStoredAuthData } from './authSession.js';
+
+const AuthContext = createContext();
+
+export const useAuth = () => useContext(AuthContext);
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const role = localStorage.getItem('role');
+    const name = localStorage.getItem('name');
+    const assigned_constituency = localStorage.getItem('assigned_constituency');
+    const assigned_region = localStorage.getItem('assigned_region');
+    const assigned_mandal = localStorage.getItem('assigned_mandal');
+    const id = localStorage.getItem('id');
+
+    try {
+      const decoded = token ? jwtDecode(token) : null;
+      if (token && role && decoded?.exp && decoded.exp * 1000 > Date.now()) {
+        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        setUser({ token, role, name, assigned_region, assigned_constituency, assigned_mandal, id });
+      } else {
+        clearStoredAuthData();
+        delete axios.defaults.headers.common['Authorization'];
+      }
+    } catch {
+      clearStoredAuthData();
+      delete axios.defaults.headers.common['Authorization'];
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    const clearExpiredSession = () => {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      try {
+        const decoded = jwtDecode(token);
+        if (!decoded?.exp || decoded.exp * 1000 <= Date.now()) {
+          clearStoredAuthData();
+          delete axios.defaults.headers.common['Authorization'];
+          setUser(null);
+        }
+      } catch {
+        clearStoredAuthData();
+        delete axios.defaults.headers.common['Authorization'];
+        setUser(null);
+      }
+    };
+    const timer = setInterval(clearExpiredSession, 30000);
+    const interceptor = axios.interceptors.response.use(response => response, error => {
+      const requestUrl = String(error.config?.url || '');
+      if ([401, 403].includes(error.response?.status) && !requestUrl.includes('/auth/login')) clearExpiredSession();
+      return Promise.reject(error);
+    });
+    return () => {
+      clearInterval(timer);
+      axios.interceptors.response.eject(interceptor);
+    };
+  }, []);
+
+  const login = async (email, password) => {
+    const response = await axios.post(`${API}/auth/login`, { email, password });
+    const { token, role, name, assigned_region, assigned_constituency, assigned_mandal } = response.data;
+    
+    const decoded = jwtDecode(token);
+    const id = decoded.id;
+
+    localStorage.setItem('token', token);
+    localStorage.setItem('role', role);
+    localStorage.setItem('name', name || '');
+    localStorage.setItem('assigned_constituency', assigned_constituency || '');
+    localStorage.setItem('assigned_region', assigned_region || '');
+    localStorage.setItem('assigned_mandal', assigned_mandal || '');
+    localStorage.setItem('id', id);
+    
+    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    setUser({ token, role, name, assigned_region, assigned_constituency, assigned_mandal, id });
+    return response.data;
+  };
+
+  const logout = () => {
+    clearStoredAuthData();
+    delete axios.defaults.headers.common['Authorization'];
+    setUser(null);
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, login, logout, loading }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};

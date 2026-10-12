@@ -1,0 +1,85 @@
+import { useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { LogOut, UserPlus, History, Search, ClipboardEdit } from 'lucide-react';
+import EnrollmentForm from '../components/EnrollmentForm';
+import EnrollmentHistory from '../components/EnrollmentHistory';
+
+export default function CoordinatorDashboard() {
+  const { user, logout } = useAuth();
+  const [activeTab, setActiveTab] = useState('enroll'); // enroll or history
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const handleSearch = (event) => {
+    const value = event.target.value;
+    setSearch(value);
+    if (value.trim()) setActiveTab('history');
+  };
+  const effectiveStatusFilter = activeTab === 'status' ? 'pending' : statusFilter;
+
+  return (
+    <div className="coordinator-shell min-h-screen flex flex-col">
+      {/* Mobile-friendly Header */}
+      <header className="coordinator-header text-[#173b35] p-4 border-b border-[#e4ebe7] sticky top-0 z-10 flex justify-between items-center">
+        <div className="flex items-center gap-3 min-w-0">
+          <img src="/rakeshreddy.png" alt="EMS" className="coordinator-logo" />
+          <div className="min-w-0">
+            <div className="app-brand-wrap">
+              <p className="app-brand-text app-brand-desktop">EMS BY METAKNACKS</p>
+              <p className="app-brand-text app-brand-mobile">EMS BY METAKNACKS</p>
+            </div>
+            {user?.assigned_constituency && user.assigned_constituency !== 'All' && (
+              <p className="coordinator-assignment">{user.assigned_constituency.replace(/\s*\([^)]*\)/g, '')} </p>
+            )}
+            <h1 className="dashboard-page-title agent-page-title hidden sm:block">AGENT OVERVIEW</h1>
+          </div>
+        </div>
+        <div className="coordinator-search"><Search size={16} /><input value={search} onChange={handleSearch} placeholder="Search Voter ID or Application ID" aria-label="Search Voter ID or Application ID" /></div>
+        <button onClick={logout} title="Sign out" aria-label="Sign out" className="p-2 text-gray-500 hover:bg-green-50 rounded-lg transition-colors">
+          <LogOut size={20} />
+        </button>
+      </header>
+
+      {/* Main Content */}
+      <main className="coordinator-main flex-1 w-full bg-white shadow-sm flex flex-col relative pb-20">
+        <div className={activeTab === 'enroll' ? '' : 'hidden'}><EnrollmentForm /></div>
+        <div className={activeTab === 'enroll' ? 'hidden' : ''}>
+          {activeTab !== 'enroll' && activeTab !== 'status' && (
+            <div className="flex flex-wrap gap-2 border-b border-gray-200 bg-white p-3">
+              <button type="button" onClick={() => setStatusFilter('')} className={`rounded px-3 py-2 text-xs font-semibold ${activeTab === 'status' || !statusFilter ? 'bg-[#173b35] text-white' : 'bg-gray-100 text-gray-600'}`}>All</button>
+              <button type="button" onClick={() => setStatusFilter('pending')} className={`rounded px-3 py-2 text-xs font-semibold ${statusFilter === 'pending' && activeTab !== 'status' ? 'bg-yellow-500 text-white' : 'bg-gray-100 text-gray-600'}`}>Pending</button>
+              <button type="button" onClick={() => setStatusFilter('approved')} className={`rounded px-3 py-2 text-xs font-semibold ${statusFilter === 'approved' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'}`}>Approved</button>
+              <button type="button" onClick={() => setStatusFilter('rejected')} className={`rounded px-3 py-2 text-xs font-semibold ${statusFilter === 'rejected' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600'}`}>Rejected</button>
+            </div>
+          )}
+          <EnrollmentHistory search={search} statusFilter={activeTab === 'status' ? 'pending' : effectiveStatusFilter} editable={activeTab === 'status'} />
+        </div>
+      </main>
+
+      {/* Bottom Navigation for Mobile */}
+      <nav className="coordinator-nav fixed bottom-0 w-full bg-white border-t border-gray-200 flex justify-around">
+        <button 
+          onClick={() => setActiveTab('enroll')}
+          className={`flex-1 flex flex-col items-center p-3 transition-colors ${activeTab === 'enroll' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-500'}`}
+        >
+          <UserPlus size={24} />
+          <span className="text-xs mt-1 font-medium">New Enroll</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('status')}
+          className={`flex-1 flex flex-col items-center p-3 transition-colors ${activeTab === 'status' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-500'}`}
+        >
+          <ClipboardEdit size={24} />
+          <span className="text-xs mt-1 font-medium">Edit status</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('history')}
+          className={`flex-1 flex flex-col items-center p-3 transition-colors ${activeTab === 'history' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-500'}`}
+        >
+          <History size={24} />
+          <span className="text-xs mt-1 font-medium">History</span>
+        </button>
+      </nav>
+    </div>
+  );
+}
