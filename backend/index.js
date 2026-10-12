@@ -393,8 +393,8 @@ app.post('/api/auth/login', async (req, res) => {
         if (!validPassword) return res.status(401).json({ error: 'Invalid email or password' });
         let assignedRegion = user.assigned_region;
         if (!assignedRegion && user.assigned_constituency) {
-            const geography = await pool.query('SELECT "Old District" FROM master_geography WHERE "Assembly Constituency" = $1 LIMIT 1', [user.assigned_constituency]);
-            assignedRegion = geography.rows[0]?.['Old District'] || null;
+            const geography = await pool.query('SELECT "Region" AS region FROM master_geography WHERE "Constituency" = $1 LIMIT 1', [user.assigned_constituency]);
+            assignedRegion = geography.rows[0]?.region || null;
         }
 
         const token = jwt.sign(
@@ -428,10 +428,10 @@ app.post('/api/admin/create-coordinator', authenticateToken, requireRoles('super
         const constituencyVariants = getGeographyNameVariants(selectedConstituency);
         const regionLookup = selectedRegion || (selectedConstituency && (await pool.query(
             constituencyVariants.length > 1
-                ? 'SELECT "Old District" FROM master_geography WHERE "Assembly Constituency" = ANY($1) LIMIT 1'
-                : 'SELECT "Old District" FROM master_geography WHERE "Assembly Constituency" = $1 LIMIT 1',
+                ? 'SELECT "Region" AS region FROM master_geography WHERE "Constituency" = ANY($1) LIMIT 1'
+                : 'SELECT "Region" AS region FROM master_geography WHERE "Constituency" = $1 LIMIT 1',
             constituencyVariants.length > 1 ? [constituencyVariants] : [selectedConstituency]
-        )).rows[0]?.['Old District']);
+        )).rows[0]?.region);
         const resolvedRegion = String(regionLookup || '').trim();
         if (!resolvedRegion) return res.status(400).json({ error: 'Select a valid region or choose All region access.' });
 
@@ -439,8 +439,8 @@ app.post('/api/admin/create-coordinator', authenticateToken, requireRoles('super
             const mandalVariants = getGeographyNameVariants(selectedMandal);
             const geography = await pool.query(
                 mandalVariants.length > 1
-                    ? 'SELECT 1 FROM master_geography WHERE "Old District" = $1 AND "Assembly Constituency" = ANY($2) AND "Mandal" = ANY($3) LIMIT 1'
-                    : 'SELECT 1 FROM master_geography WHERE "Old District" = $1 AND "Assembly Constituency" = $2 AND "Mandal" = $3 LIMIT 1',
+                    ? 'SELECT 1 FROM master_geography WHERE "Region" = $1 AND "Constituency" = ANY($2) AND "Mandals/Neighbourhoods" = ANY($3) LIMIT 1'
+                    : 'SELECT 1 FROM master_geography WHERE "Region" = $1 AND "Constituency" = $2 AND "Mandals/Neighbourhoods" = $3 LIMIT 1',
                 mandalVariants.length > 1
                     ? [resolvedRegion, constituencyVariants, mandalVariants]
                     : [resolvedRegion, selectedConstituency, selectedMandal]
@@ -715,7 +715,7 @@ app.post('/api/admin/coordinators/reset-password', authenticateToken, requireRol
 app.get('/api/admin/geography', authenticateToken, requireRoles('super_admin'), async (req, res) => {
     const { region, constituency, mandal, search } = req.query;
     try {
-        let query = `SELECT "Old District" AS region, "AC No" AS ac_no, "Assembly Constituency" AS assembly_constituency, "Mandal" AS mandal, "Village" AS village, "Village LGD Code" AS village_lgd_code, "Gram Panchayat" AS gram_panchayat, "Gram Panchayat LGD Code" AS gram_panchayat_lgd_code, "Pincode" AS pincode FROM master_geography WHERE COALESCE("Source", '') NOT IN ('manual_mandal_option', 'hidden_mandal_option')`;
+        let query = `SELECT "Region" AS region, "District" AS district, "Constituency" AS assembly_constituency, "Mandals/Neighbourhoods" AS mandal FROM master_geography WHERE 1=1`;
         const params = [];
         const add = (condition, value) => { if (value) { params.push(value); query += ` AND ${condition} = $${params.length}`; } };
         const addNameVariant = (condition, value) => {
@@ -724,9 +724,9 @@ app.get('/api/admin/geography', authenticateToken, requireRoles('super_admin'), 
             params.push(variants);
             query += ` AND ${condition} = ANY($${params.length})`;
         };
-        add('"Old District"', region); addNameVariant('"Assembly Constituency"', constituency); addNameVariant('"Mandal"', mandal);
-        if (search) { params.push(`%${search}%`); query += ` AND ("Village" ILIKE $${params.length} OR "Mandal" ILIKE $${params.length} OR "Assembly Constituency" ILIKE $${params.length})`; }
-        query += ' ORDER BY "Old District", "Assembly Constituency", "Mandal", "Village" LIMIT 10000';
+        add('"Region"', region); addNameVariant('"Constituency"', constituency); addNameVariant('"Mandals/Neighbourhoods"', mandal);
+        if (search) { params.push(`%${search}%`); query += ` AND ("District" ILIKE $${params.length} OR "Region" ILIKE $${params.length} OR "Constituency" ILIKE $${params.length} OR "Mandals/Neighbourhoods" ILIKE $${params.length})`; }
+        query += ' ORDER BY "Region", "Constituency", "Mandals/Neighbourhoods" LIMIT 10000';
         const result = await pool.query(query, params);
         const geography = result.rows.map(row => ({
             ...row,
@@ -754,7 +754,7 @@ app.patch('/api/admin/voters/:id/status', authenticateToken, requireRoles('super
 // NEW GEOGRAPHY ROUTES
 app.get('/api/geo/regions', async (req, res) => {
     try {
-        const result = await pool.query('SELECT DISTINCT "Old District" as region FROM master_geography WHERE "Old District" IS NOT NULL ORDER BY "Old District"');
+        const result = await pool.query('SELECT DISTINCT "Region" AS region FROM master_geography WHERE "Region" IS NOT NULL ORDER BY "Region"');
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: 'Server error' });
@@ -765,8 +765,8 @@ app.get('/api/geo/assemblies', async (req, res) => {
     try {
         const { region } = req.query;
         const result = region
-            ? await pool.query('SELECT DISTINCT "Old District" as region, "AC No" as ac_no, "Assembly Constituency" as assembly_constituency FROM master_geography WHERE "Old District" = $1 ORDER BY "Assembly Constituency"', [region])
-            : await pool.query('SELECT DISTINCT "Old District" as region, "AC No" as ac_no, "Assembly Constituency" as assembly_constituency FROM master_geography ORDER BY "Assembly Constituency"');
+            ? await pool.query('SELECT DISTINCT "Region" AS region, NULL::text AS ac_no, "Constituency" AS assembly_constituency FROM master_geography WHERE "Region" = $1 ORDER BY "Constituency"', [region])
+            : await pool.query('SELECT DISTINCT "Region" AS region, NULL::text AS ac_no, "Constituency" AS assembly_constituency FROM master_geography ORDER BY "Constituency"');
         res.json(result.rows.map(row => ({
             ...row,
             assembly_constituency: normalizeGeographyName(row.assembly_constituency)
@@ -781,8 +781,8 @@ app.get('/api/geo/mandals', async (req, res) => {
         const { constituency } = req.query;
         const variants = getGeographyNameVariants(constituency);
         const result = variants.length > 1
-            ? await pool.query(`SELECT DISTINCT "Mandal" as mandal FROM master_geography WHERE "Assembly Constituency" = ANY($1) AND COALESCE("Source", '') <> 'hidden_mandal_option' ORDER BY "Mandal"`, [variants])
-            : await pool.query(`SELECT DISTINCT "Mandal" as mandal FROM master_geography WHERE "Assembly Constituency" = $1 AND COALESCE("Source", '') <> 'hidden_mandal_option' ORDER BY "Mandal"`, [constituency]);
+            ? await pool.query('SELECT DISTINCT "Mandals/Neighbourhoods" AS mandal FROM master_geography WHERE "Constituency" = ANY($1) ORDER BY "Mandals/Neighbourhoods"', [variants])
+            : await pool.query('SELECT DISTINCT "Mandals/Neighbourhoods" AS mandal FROM master_geography WHERE "Constituency" = $1 ORDER BY "Mandals/Neighbourhoods"', [constituency]);
         res.json(result.rows.map(row => ({ ...row, mandal: normalizeGeographyName(row.mandal) })));
     } catch (err) {
         res.status(500).json({ error: 'Server error' });
