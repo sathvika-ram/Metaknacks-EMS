@@ -19,8 +19,6 @@ const allowedOrigins = Array.from(new Set([
     'http://127.0.0.1:5173',
     'http://localhost:5174',
     'http://127.0.0.1:5174',
-    'https://kingmayker-ems-ten.vercel.app',
-    'https://ems.metaknacks.com',
     ...String(process.env.FRONTEND_URL || '')
         .split(',')
         .map(origin => origin.trim().replace(/\/$/, ''))
@@ -229,29 +227,13 @@ function titleCaseName(value) {
     return String(value || '').trim().toLowerCase().replace(/(^|[\s'-])([a-z])/g, (_, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
 }
 
-const geographyNameAliases = new Map([
-    ['bhupalpalle', 'Bhupalpally'],
-    ['bhupalapalle', 'Bhupalpally'],
-    ['bhupalpally', 'Bhupalpally']
-]);
-
 function normalizeGeographyName(value) {
-    const trimmed = String(value ?? '').trim();
-    if (!trimmed) return trimmed;
-    return geographyNameAliases.get(trimmed.toLowerCase()) || trimmed;
+    return String(value ?? '').trim();
 }
 
 function getGeographyNameVariants(value) {
     const trimmed = String(value ?? '').trim();
-    if (!trimmed) return [];
-    const variants = new Set([trimmed, normalizeGeographyName(trimmed)]);
-    const key = trimmed.toLowerCase();
-    if (['bhupalpalle', 'bhupalapalle', 'bhupalpally'].includes(key)) {
-        variants.add('Bhupalpalle');
-        variants.add('Bhupalapalle');
-        variants.add('Bhupalpally');
-    }
-    return [...variants].filter(Boolean);
+    return trimmed ? [trimmed] : [];
 }
 
     function getAuditRequestDetails(req) {
@@ -269,9 +251,10 @@ function getGeographyNameVariants(value) {
     }
 
     function writeAudit(userId, action, details = {}, req) {
+        const requestDetails = getAuditRequestDetails(req);
         return pool.query(
-            'INSERT INTO audit_logs (user_id, action, details, timestamp) VALUES ($1, $2, $3, NOW())',
-            [userId || null, action, { ...details, request: getAuditRequestDetails(req) }]
+            'INSERT INTO system_audits (user_id, user_email, action, details, ip_address, created_at) VALUES ($1, $2, $3, $4, $5, NOW())',
+            [userId || null, req?.user?.email || req?.body?.email || 'system', action, { ...details, request: requestDetails }, requestDetails.ip_address]
         ).catch(error => console.error('Audit log write failed:', error.message));
     }
 
@@ -634,7 +617,7 @@ app.get('/api/admin/summary', authenticateToken, requireRoles('super_admin', 'pa
         where = addVoterFilters(where, params, filters);
         const [metrics, regions, trend, coordinators] = await Promise.all([
             pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE enrollment_status IN ('pending', 'in_progress'))::int AS pending, COUNT(*) FILTER (WHERE enrollment_status = 'approved')::int AS approved, COUNT(*) FILTER (WHERE enrollment_status = 'rejected')::int AS rejected ${where}`, params),
-            pool.query(`SELECT region, COUNT(*)::int AS count ${where} GROUP BY region ORDER BY region`, params),
+            pool.query(`SELECT region, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE enrollment_status IN ('pending', 'in_progress'))::int AS pending, COUNT(*) FILTER (WHERE enrollment_status = 'approved')::int AS approved, COUNT(*) FILTER (WHERE enrollment_status = 'rejected')::int AS rejected ${where} GROUP BY region ORDER BY region`, params),
             pool.query(`SELECT created_at::date AS day, COUNT(*)::int AS count ${where} AND created_at >= CURRENT_DATE - INTERVAL '6 days' GROUP BY created_at::date ORDER BY day`, params),
             pool.query('SELECT COUNT(*)::int AS total FROM users WHERE role = \'constituency_coordinator\'')
         ]);
@@ -648,7 +631,7 @@ app.get('/api/admin/overview', authenticateToken, requireRoles('super_admin'), a
     try {
         const [totals, regions, coordinators] = await Promise.all([
             pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE enrollment_status IN ('pending', 'in_progress'))::int AS pending, COUNT(*) FILTER (WHERE enrollment_status = 'approved')::int AS approved, COUNT(*) FILTER (WHERE enrollment_status = 'rejected')::int AS rejected FROM voters`),
-            pool.query(`SELECT region, COUNT(*)::int AS count FROM voters WHERE region IN ('Nalgonda', 'Warangal', 'Khammam') GROUP BY region ORDER BY CASE region WHEN 'Nalgonda' THEN 1 WHEN 'Warangal' THEN 2 WHEN 'Khammam' THEN 3 END`),
+            pool.query(`SELECT region, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE enrollment_status IN ('pending', 'in_progress'))::int AS pending, COUNT(*) FILTER (WHERE enrollment_status = 'approved')::int AS approved, COUNT(*) FILTER (WHERE enrollment_status = 'rejected')::int AS rejected FROM voters GROUP BY region ORDER BY region`),
             pool.query(`SELECT COUNT(*)::int AS total FROM users WHERE role = 'constituency_coordinator'`)
         ]);
         res.json({ metrics: { ...totals.rows[0], active_coordinators: coordinators.rows[0].total }, regional_breakdown: regions.rows });
@@ -765,8 +748,8 @@ app.get('/api/geo/assemblies', async (req, res) => {
     try {
         const { region } = req.query;
         const result = region
-            ? await pool.query('SELECT DISTINCT "Region" AS region, NULL::text AS ac_no, "Constituency" AS assembly_constituency FROM master_geography WHERE "Region" = $1 ORDER BY "Constituency"', [region])
-            : await pool.query('SELECT DISTINCT "Region" AS region, NULL::text AS ac_no, "Constituency" AS assembly_constituency FROM master_geography ORDER BY "Constituency"');
+            ? await pool.query('SELECT DISTINCT "Region" AS region, "Constituency" AS assembly_constituency FROM master_geography WHERE "Region" = $1 ORDER BY "Constituency"', [region])
+            : await pool.query('SELECT DISTINCT "Region" AS region, "Constituency" AS assembly_constituency FROM master_geography ORDER BY "Constituency"');
         res.json(result.rows.map(row => ({
             ...row,
             assembly_constituency: normalizeGeographyName(row.assembly_constituency)
@@ -792,9 +775,9 @@ app.get('/api/geo/mandals', async (req, res) => {
     app.get('/api/admin/audit-logs', authenticateToken, requireRoles('super_admin'), async (req, res) => {
         try {
             const result = await pool.query(`
-                SELECT a.id, a.action, a.details, a.timestamp, u.name as user_name, u.role
-                FROM audit_logs a LEFT JOIN users u ON a.user_id = u.id
-                ORDER BY a.timestamp DESC LIMIT 200
+                SELECT a.id, a.action, a.details, a.created_at AS timestamp, COALESCE(u.name, a.user_email) AS user_name, u.role
+                FROM system_audits a LEFT JOIN users u ON a.user_id = u.id
+                ORDER BY a.created_at DESC LIMIT 200
             `);
             res.json({ logs: result.rows });
         } catch (err) {

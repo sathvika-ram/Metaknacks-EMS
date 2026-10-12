@@ -9,10 +9,7 @@ const inputClass = 'w-full rounded-md border border-[#9bb4ad] bg-white px-3 py-2
 const labelClass = 'mb-1 block text-xs font-semibold text-[#52736a]';
 const requiredStar = <span className="text-red-600">*</span>;
 const normalizeGeographyName = (value) => {
-  const text = String(value ?? '').trim();
-  if (!text) return text;
-  const aliases = { bhupalpalle: 'Bhupalpally', bhupalapalle: 'Bhupalpally', bhupalpally: 'Bhupalpally' };
-  return aliases[text.toLowerCase()] || text;
+  return String(value ?? '').trim();
 };
 const createSubmissionKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const titleCaseWords = (value) => String(value || '').replace(/[^a-zA-Z\s'-]/g, '').replace(/\s+/g, ' ').replace(/(^|[\s'-])([a-z])/g, (_, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
@@ -253,7 +250,7 @@ export default function EnrollmentForm({ coordinatorId, onSubmitted }) {
         <section className="space-y-4 rounded-lg border border-[#e4ebe7] bg-[#f7faf8] p-4 sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e4ebe7] pb-2"><h3 className="text-sm font-bold text-[#52736a]">Complete address</h3><p className="text-xs font-semibold tracking-wide text-[#1d6b5d]">Region: <span className="font-bold">{formData.region || 'Auto-filled'}</span></p></div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div><label className={labelClass} htmlFor="constituency"><span>Assembly constituency</span>{requiredStar}</label><select id="constituency" name="constituency" required value={formData.constituency} onChange={handleChange} onBlur={handleBlur} disabled={Boolean(user?.assigned_constituency && user.assigned_constituency !== 'All')} className={inputClass}><option value="" disabled hidden>Select constituency</option>{assemblies.map(item => <option key={`${item.ac_no}-${item.assembly_constituency}`} value={item.assembly_constituency}>{item.assembly_constituency}</option>)}</select>{fieldErrors.constituency && <p className="mt-1 text-xs font-medium text-[#b44d45]" role="alert">{fieldErrors.constituency}</p>}</div>
+            <div><label className={labelClass} htmlFor="constituency"><span>Assembly constituency</span>{requiredStar}</label><select id="constituency" name="constituency" required value={formData.constituency} onChange={handleChange} onBlur={handleBlur} disabled={Boolean(user?.assigned_constituency && user.assigned_constituency !== 'All')} className={inputClass}><option value="" disabled hidden>Select constituency</option>{assemblies.map(item => <option key={`${item.region}-${item.assembly_constituency}`} value={item.assembly_constituency}>{item.assembly_constituency}</option>)}</select>{fieldErrors.constituency && <p className="mt-1 text-xs font-medium text-[#b44d45]" role="alert">{fieldErrors.constituency}</p>}</div>
             <Field label={<><span>Mandal</span>{requiredStar}</>} name="mandal" value={formData.mandal} onChange={handleChange} onBlur={handleBlur} error={fieldErrors.mandal} required disabled={!formData.constituency || !mandals.length} as="select"><option value="" disabled hidden>Select mandal</option>{mandals.map(item => <option key={item.mandal} value={item.mandal}>{item.mandal}</option>)}<option value="Others">Others</option></Field>
             <Field label={<><span>Village/Ward/Division</span>{requiredStar}</>} name="village" value={formData.village} onChange={handleChange} onBlur={handleBlur} error={fieldErrors.village} required placeholder="Village, ward, or division" maxLength={MAX_FIELD_LENGTHS.village} />
             <Field label="Complete address (optional)" name="complete_address" value={formData.complete_address} onChange={handleChange} onBlur={handleBlur} error={fieldErrors.complete_address} as="textarea" rows={2} className={`${inputClass} min-h-20 resize-y`} placeholder="House number, street, and landmark" maxLength={MAX_FIELD_LENGTHS.complete_address} />

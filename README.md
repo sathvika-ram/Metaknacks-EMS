@@ -17,23 +17,31 @@ backend/    Express API, PostgreSQL schema, and backend scripts
 
 ## Fresh Database Setup
 
-Create a new PostgreSQL database or Supabase project. Apply [`backend/schema.sql`](backend/schema.sql) using the Supabase SQL Editor or from PowerShell with `psql`:
+Create a new PostgreSQL database or Supabase project. The current repository does not include an application-wide `backend/schema.sql`; set up the `users`, `voters`, and `system_audits` tables using the schema for this app before starting the API.
 
-```powershell
-psql "postgresql://USER:PASSWORD@HOST:PORT/DATABASE" -f backend/schema.sql
+Create `public.master_geography` with the headers from the supplied geography CSV:
+
+```sql
+CREATE TABLE public.master_geography (
+	"ID" INTEGER PRIMARY KEY,
+	"District" TEXT NOT NULL,
+	"Region" TEXT NOT NULL,
+	"Constituency" TEXT NOT NULL,
+	"Mandals/Neighbourhoods" TEXT NOT NULL
+);
 ```
 
-Import the application's geography dataset into `master_geography` to populate the region, constituency, mandal, and village selectors. Preserve the source column headers shown in `backend/schema.sql`. The dataset is not included in this repository.
+Import the CSV into that table without renaming its columns. Region, constituency, and mandal selectors use `Region`, `Constituency`, and `Mandals/Neighbourhoods`; `District` and `ID` are retained from the source data. Do not use columns from the previous geography dataset.
 
 ## Configure and Run
 
-In PowerShell, from the project root, prepare the backend environment file:
+In PowerShell, from the project root, prepare the backend environment file without overwriting an existing one:
 
 ```powershell
-Copy-Item -NoClobber backend/.env.example backend/.env
+if (-not (Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
 ```
 
-Set `DATABASE_URL`, a random `JWT_SECRET` of at least 32 characters, and the Supabase storage values in `backend/.env`. For local PostgreSQL, set `DATABASE_URL` to its connection string. For production Supabase, use the Session Pooler on port `6543` with `pgbouncer=true`. Keep the Supabase service-role key on the backend only.
+Set `DATABASE_URL`, a random `JWT_SECRET` of at least 32 characters, and the Supabase storage values in `backend/.env`. For Supabase, copy the Session Pooler URI from that project's **Connect** panel. Keep the Supabase service-role key on the backend only.
 
 Open **Terminal 1**:
 
@@ -48,13 +56,13 @@ The API listens on `http://localhost:5000`; check it at `http://localhost:5000/a
 Open **Terminal 2** from the project root:
 
 ```powershell
-Copy-Item -NoClobber frontend/.env.example frontend/.env
+if (-not (Test-Path frontend/.env)) { Copy-Item frontend/.env.example frontend/.env }
 cd frontend
 npm ci
 npm run dev
 ```
 
-Open the Vite URL shown in the terminal, usually `http://localhost:5173`. `VITE_API_BASE_URL` should be `http://localhost:5000` for local development.
+Open the Vite URL shown in the terminal, usually `http://localhost:5173`. `VITE_API_BASE_URL` should be `http://localhost:5000` for local development. Production deployments must set it to this project's backend URL; the frontend will not fall back to another deployment.
 
 ## Create the First Admin
 
@@ -83,4 +91,4 @@ Environment files and `node_modules` are ignored by Git. Commit `.env.example` f
 
 ## Deployment Notes
 
-Deploy `frontend/` as a Vercel project and set `VITE_API_BASE_URL` to the new backend URL. Deploy `backend/` as a Node service, set its environment variables in the hosting provider, and allow the deployed frontend origin with `FRONTEND_URL`. Apply `backend/schema.sql` to the new database and import the geography dataset before using the geography selectors. Uploaded documents use a private Supabase Storage bucket named `voter-documents` by default.
+Deploy `frontend/` as a Vercel project and set `VITE_API_BASE_URL` to this project's backend URL. Deploy `backend/` as a Node service, set its environment variables in the hosting provider, and allow the deployed frontend origin with `FRONTEND_URL`. Import the geography CSV into `public.master_geography` before using geography selectors. Uploaded documents use a private Supabase Storage bucket named `voter-documents` by default.
