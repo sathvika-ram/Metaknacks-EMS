@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { API_CONFIGURED } from './utils/api';
 
 const Login = lazy(() => import('./pages/Login'));
 const CoordinatorDashboard = lazy(() => import('./pages/CoordinatorDashboard'));
@@ -32,6 +33,10 @@ const DefaultRedirect = () => {
 };
 
 function App() {
+  if (!API_CONFIGURED) {
+    return <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6 text-slate-900"><section className="max-w-lg rounded-lg border border-amber-300 bg-white p-6 shadow-sm"><h1 className="text-lg font-bold">Backend URL is not configured</h1><p className="mt-2 text-sm leading-6 text-slate-600">Set <code>VITE_API_BASE_URL</code> in this Vercel project to the Render backend URL, then redeploy.</p></section></main>;
+  }
+
   return (
     <AuthProvider>
       <BrowserRouter>

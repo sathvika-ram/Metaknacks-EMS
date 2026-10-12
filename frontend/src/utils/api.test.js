@@ -13,5 +13,5 @@ test('uses the configured backend for remote hostnames', () => {
 });
 
 test('does not fall back to a different deployment for remote hostnames', () => {
-  assert.throws(() => getApiBaseUrl('example.com'), /VITE_API_BASE_URL/);
+  assert.equal(getApiBaseUrl('example.com'), '');
 });
