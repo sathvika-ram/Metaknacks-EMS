@@ -752,8 +752,8 @@ app.get('/api/geo/assemblies', async (req, res) => {
     try {
         const { region } = req.query;
         const result = region
-            ? await pool.query('SELECT DISTINCT "Region" AS region, "Constituency" AS assembly_constituency FROM master_geography WHERE "Region" = $1 ORDER BY "Constituency"', [region])
-            : await pool.query('SELECT DISTINCT "Region" AS region, "Constituency" AS assembly_constituency FROM master_geography ORDER BY "Constituency"');
+            ? await pool.query('SELECT DISTINCT BTRIM("Region") AS region, BTRIM("Constituency") AS assembly_constituency FROM master_geography WHERE BTRIM("Region") = $1 AND NULLIF(BTRIM("Constituency"), \'\') IS NOT NULL ORDER BY assembly_constituency', [region])
+            : await pool.query('SELECT DISTINCT BTRIM("Region") AS region, BTRIM("Constituency") AS assembly_constituency FROM master_geography WHERE NULLIF(BTRIM("Region"), \'\') IS NOT NULL AND NULLIF(BTRIM("Constituency"), \'\') IS NOT NULL ORDER BY assembly_constituency');
         res.json(result.rows.map(row => ({
             ...row,
             assembly_constituency: normalizeGeographyName(row.assembly_constituency)

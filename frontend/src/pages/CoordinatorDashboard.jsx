@@ -22,7 +22,7 @@ export default function CoordinatorDashboard() {
       {/* Mobile-friendly Header */}
       <header className="coordinator-header text-[#173b35] p-4 border-b border-[#e4ebe7] sticky top-0 z-10 flex justify-between items-center">
         <div className="flex items-center gap-3 min-w-0">
-          <img src="/ktr.jpg" alt="KTR" className="coordinator-logo" />
+          <img src="/ktr2.jpg" alt="KTR" className="coordinator-logo" />
           <div className="min-w-0">
             <div className="app-brand-wrap">
               <p className="app-brand-text app-brand-desktop">EMS BY METAKNACKS</p>
