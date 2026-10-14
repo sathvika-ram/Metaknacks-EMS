@@ -15,6 +15,7 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 const allowedOrigins = Array.from(new Set([
+    'https://ets.metaknacks.com',
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     'http://localhost:5174',
