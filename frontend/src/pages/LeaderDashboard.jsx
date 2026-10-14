@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { BarChart3, CheckCircle, Clock3, LayoutDashboard, LogOut, Map, Menu, RefreshCw, Search, Users, X, ArrowLeft } from 'lucide-react';
+import { BarChart3, CheckCircle, Clock3, LayoutDashboard, LogOut, Map as MapIcon, Menu, RefreshCw, Search, Users, X, ArrowLeft } from 'lucide-react';
 import { API } from '../utils/api';
 
 const selectClass = 'rounded-md border border-[#b5c9c1] bg-white px-3 py-2 text-sm text-[#173b35] focus:border-[#1d6b5d]';
@@ -62,36 +62,26 @@ export default function LeaderDashboard() {
 
   useEffect(() => { axios.get(`${API}/geo/regions`).then(result => setRegions(result.data || [])).catch(() => setError('Unable to load regions.')); }, []);
   useEffect(() => {
-    let active = true;
     if (!regions.length) {
       setRegionalStats([]);
-      return () => { active = false; };
+      return;
     }
-    axios.get(`${API}/admin/summary`)
-      .then(result => {
-        const statsByRegion = new Map();
-        (result.data.regional_breakdown || []).forEach(item => {
-          const key = normalizeRegionalKey(item.region);
-          const current = statsByRegion.get(key) || { total: 0, approved: 0 };
-          statsByRegion.set(key, {
-            total: current.total + Number(item.total || 0),
-            approved: current.approved + Number(item.approved || 0)
-          });
-        });
-        const stats = regions.map(({ region: name }) => ({
-          name,
-          total: 0,
-          approved: 0,
-          ...statsByRegion.get(normalizeRegionalKey(name))
-        }));
-        if (active) {
-          setRegionalStats(stats);
-          setError(currentError => currentError === 'Unable to load regional analytics.' ? '' : currentError);
-        }
-      })
-      .catch(() => setError('Unable to load regional analytics.'));
-    return () => { active = false; };
-  }, [regions, refreshKey]);
+    const statsByRegion = new Map();
+    (summary.regional_breakdown || []).forEach(item => {
+      const key = normalizeRegionalKey(item.region);
+      const current = statsByRegion.get(key) || { total: 0, approved: 0 };
+      statsByRegion.set(key, {
+        total: current.total + Number(item.total || 0),
+        approved: current.approved + Number(item.approved || 0)
+      });
+    });
+    setRegionalStats(regions.map(({ region: name }) => ({
+      name,
+      total: 0,
+      approved: 0,
+      ...statsByRegion.get(normalizeRegionalKey(name))
+    })));
+  }, [regions, summary.regional_breakdown]);
   useEffect(() => {
     let active = true;
     const loadConstituencyCards = async () => {
@@ -203,7 +193,7 @@ export default function LeaderDashboard() {
       </aside>
       {sidebarOpen && <button type="button" aria-label="Close navigation overlay" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-[#173b35]/40 lg:hidden" />}
       <main className="min-w-0 flex-1 space-y-5 p-4 sm:p-8" id="overview"><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-[#7b9b3a]">Leader dashboard</p><h2 className="mt-1 text-2xl font-bold">Regional performance</h2><p className="mt-1 text-sm text-[#64736f]">Live enrollment intelligence from the voter database.</p></div><button type="button" onClick={() => { loadDashboardData(); setRefreshKey(key => key + 1); }} title="Refresh data" aria-label="Refresh data" className="rounded-md border border-[#b5c9c1] bg-white p-2 text-[#1d6b5d] transition hover:bg-[#eef6f2]"><RefreshCw size={17} className={loading || constituencyCardsLoading ? 'animate-spin' : ''} /></button></div>
-        <section className="rounded-lg border border-[#e4ebe7] bg-white p-4 shadow-sm" id="geography"><div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#52736a]"><Map size={16} /> Executive filters</div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><select value={region} onChange={event => setRegion(event.target.value)} className={selectClass}><option value="">All Regions</option>{regions.map(item => <option key={item.region} value={item.region}>{item.region}</option>)}</select><select value={constituency} onChange={event => setConstituency(event.target.value)} className={selectClass}><option value="">Select constituency</option>{constituencies.map(item => <option key={`${item.region}-${item.assembly_constituency}`} value={item.assembly_constituency}>{item.assembly_constituency}</option>)}</select><select value={mandal} onChange={event => setMandal(event.target.value)} disabled={!constituency} className={selectClass}><option value="">All Mandals</option>{mandals.map(item => <option key={item.mandal} value={item.mandal}>{item.mandal}</option>)}</select><select value={status} onChange={event => setStatus(event.target.value)} className={selectClass}><option value="">All Statuses</option><option value="approved">Approved</option><option value="pending">Pending</option><option value="rejected">Rejected</option></select></div></section>
+        <section className="rounded-lg border border-[#e4ebe7] bg-white p-4 shadow-sm" id="geography"><div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#52736a]"><MapIcon size={16} /> Executive filters</div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><select value={region} onChange={event => setRegion(event.target.value)} className={selectClass}><option value="">All Regions</option>{regions.map(item => <option key={item.region} value={item.region}>{item.region}</option>)}</select><select value={constituency} onChange={event => setConstituency(event.target.value)} className={selectClass}><option value="">Select constituency</option>{constituencies.map(item => <option key={`${item.region}-${item.assembly_constituency}`} value={item.assembly_constituency}>{item.assembly_constituency}</option>)}</select><select value={mandal} onChange={event => setMandal(event.target.value)} disabled={!constituency} className={selectClass}><option value="">All Mandals</option>{mandals.map(item => <option key={item.mandal} value={item.mandal}>{item.mandal}</option>)}</select><select value={status} onChange={event => setStatus(event.target.value)} className={selectClass}><option value="">All Statuses</option><option value="approved">Approved</option><option value="pending">Pending</option><option value="rejected">Rejected</option></select></div></section>
         {error && <div className="rounded-md border border-[#f0c8c2] bg-[#fff3f1] p-3 text-sm text-[#a84b43]">{error}</div>}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Metric icon={<Users size={19} />} label="Total enrollments" value={total} /><Metric icon={<BarChart3 size={19} />} label="Today's velocity" value={`+${today}`} /><Metric icon={<CheckCircle size={19} />} label="Verification approved" value={`${approvalRate}%`} /><Metric icon={<Clock3 size={19} />} label="Pending review" value={pending} /></div>
         <section className="rounded-lg border border-[#e4ebe7] bg-white p-4 shadow-sm" aria-labelledby="constituency-performance-title"><div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h3 id="constituency-performance-title" className="font-bold">Constituency performance</h3><p className="mt-1 text-xs text-[#64736f]">Enrollment totals, approved applications, and today's velocity{region ? ` in ${region}` : ' across all regions'}.</p></div><div className="relative w-full sm:w-64"><Search size={15} className="absolute left-3 top-2.5 text-[#64736f]" /><input type="search" value={constituencySearch} onChange={event => { setConstituencySearch(event.target.value); setShowAllConstituencies(false); }} onFocus={() => setConstituencySearchFocused(true)} onBlur={() => setConstituencySearchFocused(false)} placeholder="Search constituency" aria-label="Search constituency" className={`${selectClass} w-full pl-9`} />{constituencySearchFocused && constituencySuggestions.length > 0 && <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-md border border-[#b5c9c1] bg-white py-1 shadow-lg">{constituencySuggestions.map(card => <button key={card.key} type="button" onMouseDown={event => event.preventDefault()} onClick={() => { setConstituencySearch(card.name); setShowAllConstituencies(false); }} className="block w-full px-3 py-2 text-left text-sm hover:bg-[#eef6f2]">{card.name}</button>)}</div>}</div></div>{constituencyCards.length ? matchingConstituencyCards.length ? <><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{visibleConstituencyCards.map(card => <article key={card.key} className="min-w-0 rounded-lg border border-[#e4ebe7] bg-[#fbfdfc] p-4"><h4 className="truncate text-sm font-bold text-[#173b35]" title={card.name}>{card.name}</h4><div className="mt-3 grid grid-cols-3 gap-2 border-t border-[#e4ebe7] pt-3"><div><p className="text-[10px] font-semibold uppercase text-[#64736f]">Enrolled</p><p className="mt-1 text-lg font-bold">{card.enrolled.toLocaleString()}</p></div><div><p className="text-[10px] font-semibold uppercase text-[#64736f]">Approved</p><p className="mt-1 text-lg font-bold text-[#2f7c57]">{card.approved.toLocaleString()}</p></div><div><p className="text-[10px] font-semibold uppercase text-[#64736f]">Today</p><p className="mt-1 text-lg font-bold text-[#1d6b5d]">+{card.today.toLocaleString()}</p></div></div></article>)}</div>{matchingConstituencyCards.length > initialConstituencyCardCount && <div className="mt-4 flex justify-center"><button type="button" onClick={() => setShowAllConstituencies(value => !value)} className="rounded-md border border-[#b5c9c1] px-4 py-2 text-sm font-semibold text-[#1d6b5d] transition hover:bg-[#eef6f2]">{showAllConstituencies ? 'See less' : `See more (${matchingConstituencyCards.length - initialConstituencyCardCount})`}</button></div>}</> : <div className="flex min-h-32 items-center justify-center text-sm text-[#64736f]">No matching constituencies.</div> : <div className="flex min-h-32 items-center justify-center text-sm text-[#64736f]">{constituencyCardsLoading ? 'Loading constituency analytics...' : 'No constituency data available.'}</div>}</section>
@@ -248,4 +238,3 @@ function Legend({ color, label, value }) { return <div className="flex items-cen
 function RegionalAnalytics({ stats, onBack }) {
   return <section id="regional" className="rounded-lg border border-[#e4ebe7] bg-white p-5 shadow-sm"><div className="mb-6 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-bold">Regional analytics</h2><p className="mt-1 text-sm text-[#64736f]">Total enrollments across Mahabubnagar, Ranga Reddy, and Hyderabad.</p></div><button type="button" onClick={onBack} className="inline-flex items-center gap-1 rounded border border-[#b5c9c1] px-3 py-2 text-xs font-semibold"><ArrowLeft size={14} /> Overview</button></div><RegionalBarGraph data={stats} metric="total" /></section>;
 }
-
