@@ -121,8 +121,14 @@ async function ensureVoterColumns() {
         ADD COLUMN IF NOT EXISTS father_name TEXT,
         ADD COLUMN IF NOT EXISTS mobile_number VARCHAR(20),
         ADD COLUMN IF NOT EXISTS constituency TEXT,
+        ADD COLUMN IF NOT EXISTS assembly_constituency TEXT,
         ADD COLUMN IF NOT EXISTS mandal TEXT,
         ADD COLUMN IF NOT EXISTS village TEXT,
+        ADD COLUMN IF NOT EXISTS village_ward_division TEXT,
+        ADD COLUMN IF NOT EXISTS name TEXT,
+        ADD COLUMN IF NOT EXISTS guardian_name TEXT,
+        ADD COLUMN IF NOT EXISTS application_id TEXT,
+        ADD COLUMN IF NOT EXISTS personal_email TEXT,
         ADD COLUMN IF NOT EXISTS degree_certificate_url TEXT,
         ADD COLUMN IF NOT EXISTS degree_certificate_urls TEXT[],
         ADD COLUMN IF NOT EXISTS enrollment_status VARCHAR(32) NOT NULL DEFAULT 'pending',
@@ -561,7 +567,7 @@ app.post('/api/voters/enroll', authenticateToken, requireRoles('constituency_coo
             }
 
             const existingIdentifier = await client.query(
-                'SELECT voter_id, acknowledgement_number FROM voters WHERE voter_id = $1 OR acknowledgement_number = $2 LIMIT 1',
+                'SELECT voter_id, acknowledgement_number, application_id FROM voters WHERE voter_id = $1 OR acknowledgement_number = $2 OR application_id = $2 LIMIT 1',
                 [normalizedVoterId, normalizedAcknowledgementNumber]
             );
             if (existingIdentifier.rowCount) {
@@ -572,14 +578,18 @@ app.post('/api/voters/enroll', authenticateToken, requireRoles('constituency_coo
 
             newVoter = await client.query(
             `INSERT INTO voters (
-                coordinator_id, voter_name, surname, father_name,
-                mobile_number, constituency, mandal,
-                village, degree_certificate_url, degree_certificate_urls, enrollment_status,
-                voter_id, aadhaar_number, gender, email,
-                acknowledgement_number,
+                coordinator_id, voter_name, surname, father_name, name, guardian_name,
+                mobile_number, constituency, assembly_constituency, mandal,
+                village, village_ward_division, degree_certificate_url, degree_certificate_urls, enrollment_status,
+                voter_id, aadhaar_number, gender, email, personal_email,
+                acknowledgement_number, application_id,
                 complete_address, district, pincode, region, notes, submission_key, post_office, photo_url
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending',
-                $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+            ) VALUES ($1, $2, $3, $4, $2, $4,
+                $5, $6, $6, $7,
+                $8, $8, $9, $10, 'pending',
+                $11, $12, $13, $14, COALESCE($14, ''),
+                $15, $15,
+                $16, $17, $18, $19, $20, $21, $22, $23)
             RETURNING id, coordinator_id, voter_name, surname, voter_id, enrollment_status, constituency, mandal, village, created_at`,
             [
                 numericCoordinatorId, normalizedName, normalizedSurname || null, normalizedFatherName,
