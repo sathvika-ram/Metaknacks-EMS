@@ -41,7 +41,7 @@ In PowerShell, from the project root, prepare the backend environment file witho
 if (-not (Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
 ```
 
-Set `DATABASE_URL`, a random `JWT_SECRET` of at least 32 characters, and the Supabase storage values in `backend/.env`. For Supabase, copy the Session Pooler URI from that project's **Connect** panel. Keep the Supabase service-role key on the backend only.
+Set `DATABASE_URL`, a random `JWT_SECRET` of at least 32 characters, and the Supabase storage values in `backend/.env`. For Supabase, copy the Transaction Pooler URI from that project's **Connect** panel. Supabase pooler URLs using port `5432` are automatically routed through transaction mode on port `6543` by the backend. Keep the Supabase service-role key on the backend only.
 
 Open **Terminal 1**:
 

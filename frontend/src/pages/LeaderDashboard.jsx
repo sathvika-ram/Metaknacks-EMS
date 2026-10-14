@@ -9,6 +9,7 @@ const selectClass = 'rounded-md border border-[#b5c9c1] bg-white px-3 py-2 text-
 const normalizeGeographyName = (value) => {
   return String(value ?? '').trim();
 };
+const normalizeRegionalKey = (value) => normalizeGeographyName(value).replace(/[^a-z0-9]/gi, '').toLowerCase();
 
 export default function LeaderDashboard() {
   const { user, logout } = useAuth();
@@ -25,7 +26,6 @@ export default function LeaderDashboard() {
   const [error, setError] = useState('');
   const [summary, setSummary] = useState({ metrics: {}, regional_breakdown: [], daily_trend: [] });
   const [regionalStats, setRegionalStats] = useState([]);
-  const [regionalMetric, setRegionalMetric] = useState('total');
   const [constituencyCards, setConstituencyCards] = useState([]);
   const [constituencyCardsLoading, setConstituencyCardsLoading] = useState(true);
   const [constituencySearch, setConstituencySearch] = useState('');
@@ -69,8 +69,21 @@ export default function LeaderDashboard() {
     }
     axios.get(`${API}/admin/summary`)
       .then(result => {
-        const statsByRegion = new Map((result.data.regional_breakdown || []).map(item => [item.region, item]));
-        const stats = regions.map(({ region: name }) => ({ name, total: 0, approved: 0, ...statsByRegion.get(name) }));
+        const statsByRegion = new Map();
+        (result.data.regional_breakdown || []).forEach(item => {
+          const key = normalizeRegionalKey(item.region);
+          const current = statsByRegion.get(key) || { total: 0, approved: 0 };
+          statsByRegion.set(key, {
+            total: current.total + Number(item.total || 0),
+            approved: current.approved + Number(item.approved || 0)
+          });
+        });
+        const stats = regions.map(({ region: name }) => ({
+          name,
+          total: 0,
+          approved: 0,
+          ...statsByRegion.get(normalizeRegionalKey(name))
+        }));
         if (active) {
           setRegionalStats(stats);
           setError(currentError => currentError === 'Unable to load regional analytics.' ? '' : currentError);
@@ -169,7 +182,11 @@ export default function LeaderDashboard() {
     ? matchingConstituencyCards
     : matchingConstituencyCards.slice(0, initialConstituencyCardCount);
   const navigate = (view) => { setActiveView(view); setSidebarOpen(false); };
-  const sortedRegionalStats = [...regionalStats].sort((a, b) => Number(b[regionalMetric] || 0) - Number(a[regionalMetric] || 0));
+  const featuredRegions = ['Mahabubnagar', 'Ranga Reddy', 'Hyderabad'];
+  const featuredRegionalStats = featuredRegions.map(name => {
+    const stats = regionalStats.find(item => normalizeRegionalKey(item.name) === normalizeRegionalKey(name));
+    return { name, total: Number(stats?.total || 0) };
+  });
 
   return <div className="min-h-screen bg-[#f3f7f5] text-[#173b35]">
     <header className="sticky top-0 z-30 border-b border-[#e4ebe7] bg-white/95 px-4 py-2 shadow-[0_10px_30px_rgba(15,36,30,0.06)] backdrop-blur sm:px-8"><div className="flex w-full items-center justify-between gap-3"><div className="flex items-center gap-3"><button onClick={() => setSidebarOpen(true)} title="Open navigation" aria-label="Open navigation" className="rounded-md p-2 text-[#1d6b5d] lg:hidden"><Menu size={20} /></button><img src="/ktr2.jpg" alt="KTR" className="leader-logo" /><div className="flex flex-col"><div className="app-brand-wrap"><p className="app-brand-text app-brand-desktop">EMS BY METAKNACKS</p><p className="app-brand-text app-brand-mobile">EMS BY METAKNACKS</p></div><h1 className="dashboard-page-title">LEADER VIEW</h1></div></div><div className="flex items-center gap-3"><span className="hidden text-sm font-semibold text-[#3a4f49] sm:inline">{user?.name || 'Party Leader'}</span><button onClick={logout} title="Sign out" aria-label="Sign out" className="rounded-md p-2 text-[#64736f] transition hover:bg-[#eef6f2] hover:text-[#173b35]"><LogOut size={18} /></button></div></div></header>
@@ -192,7 +209,7 @@ export default function LeaderDashboard() {
         <section className="rounded-lg border border-[#e4ebe7] bg-white p-4 shadow-sm" aria-labelledby="constituency-performance-title"><div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h3 id="constituency-performance-title" className="font-bold">Constituency performance</h3><p className="mt-1 text-xs text-[#64736f]">Enrollment totals, approved applications, and today's velocity{region ? ` in ${region}` : ' across all regions'}.</p></div><div className="relative w-full sm:w-64"><Search size={15} className="absolute left-3 top-2.5 text-[#64736f]" /><input type="search" value={constituencySearch} onChange={event => { setConstituencySearch(event.target.value); setShowAllConstituencies(false); }} onFocus={() => setConstituencySearchFocused(true)} onBlur={() => setConstituencySearchFocused(false)} placeholder="Search constituency" aria-label="Search constituency" className={`${selectClass} w-full pl-9`} />{constituencySearchFocused && constituencySuggestions.length > 0 && <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-md border border-[#b5c9c1] bg-white py-1 shadow-lg">{constituencySuggestions.map(card => <button key={card.key} type="button" onMouseDown={event => event.preventDefault()} onClick={() => { setConstituencySearch(card.name); setShowAllConstituencies(false); }} className="block w-full px-3 py-2 text-left text-sm hover:bg-[#eef6f2]">{card.name}</button>)}</div>}</div></div>{constituencyCards.length ? matchingConstituencyCards.length ? <><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{visibleConstituencyCards.map(card => <article key={card.key} className="min-w-0 rounded-lg border border-[#e4ebe7] bg-[#fbfdfc] p-4"><h4 className="truncate text-sm font-bold text-[#173b35]" title={card.name}>{card.name}</h4><div className="mt-3 grid grid-cols-3 gap-2 border-t border-[#e4ebe7] pt-3"><div><p className="text-[10px] font-semibold uppercase text-[#64736f]">Enrolled</p><p className="mt-1 text-lg font-bold">{card.enrolled.toLocaleString()}</p></div><div><p className="text-[10px] font-semibold uppercase text-[#64736f]">Approved</p><p className="mt-1 text-lg font-bold text-[#2f7c57]">{card.approved.toLocaleString()}</p></div><div><p className="text-[10px] font-semibold uppercase text-[#64736f]">Today</p><p className="mt-1 text-lg font-bold text-[#1d6b5d]">+{card.today.toLocaleString()}</p></div></div></article>)}</div>{matchingConstituencyCards.length > initialConstituencyCardCount && <div className="mt-4 flex justify-center"><button type="button" onClick={() => setShowAllConstituencies(value => !value)} className="rounded-md border border-[#b5c9c1] px-4 py-2 text-sm font-semibold text-[#1d6b5d] transition hover:bg-[#eef6f2]">{showAllConstituencies ? 'See less' : `See more (${matchingConstituencyCards.length - initialConstituencyCardCount})`}</button></div>}</> : <div className="flex min-h-32 items-center justify-center text-sm text-[#64736f]">No matching constituencies.</div> : <div className="flex min-h-32 items-center justify-center text-sm text-[#64736f]">{constituencyCardsLoading ? 'Loading constituency analytics...' : 'No constituency data available.'}</div>}</section>
         <section className="rounded-lg border border-[#e4ebe7] bg-white p-4 shadow-sm" id="records"><div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">Daily velocity trend</h3><p className="text-xs text-[#64736f]">Enrollment volume over the last seven days</p></div><span className="text-sm font-bold text-[#1d6b5d]">{today} today</span></div><TrendGraph data={trend} /></section>
         {activeView === 'overview' && <section className="rounded-lg border border-[#e4ebe7] bg-white p-4 shadow-sm"><div className="mb-4"><h3 className="font-bold">Enrollment status mix</h3><p className="text-xs text-[#64736f]">Current filtered application distribution</p></div><StatusPie approved={approved} pending={pending} rejected={rejected} /></section>}
-        {activeView === 'regional' && <RegionalAnalytics stats={sortedRegionalStats} metric={regionalMetric} setMetric={setRegionalMetric} onBack={() => navigate('overview')} />}
+        {activeView === 'regional' && <RegionalAnalytics stats={featuredRegionalStats} onBack={() => navigate('overview')} />}
       </main>
     </div>
   </div>;
@@ -225,10 +242,10 @@ function TrendGraph({ data }) {
     })}
   </div>;
 }
-function RegionalBarGraph({ data, metric }) { const max = Math.max(...data.map(item => Number(item[metric] || 0)), 1); const colors = ['#2f8068', '#d28b32', '#7b9b3a']; return <div className="flex h-72 items-end gap-6 border-b border-l border-[#dce8e2] px-6 pb-0 pt-6">{data.map((item, index) => { const value = Number(item[metric] || 0); return <div key={item.name} className="flex h-full flex-1 flex-col items-center justify-end gap-2"><span className="text-sm font-bold text-[#173b35]">{value.toLocaleString()}</span><div className="w-full max-w-24 rounded-t-md bg-[#2f8068] transition-all" style={{ height: `${Math.max(4, value / max * 100)}%`, backgroundColor: colors[index % colors.length] }} /><span className="text-sm font-semibold text-[#64736f]">{item.name}</span></div>; })}</div>; }
+function RegionalBarGraph({ data, metric }) { const max = Math.max(...data.map(item => Number(item[metric] || 0)), 1); const colors = ['#2f8068', '#d28b32', '#7b9b3a']; return <div className="flex h-72 items-end gap-6 border-b border-l border-[#dce8e2] px-6 pb-0 pt-6">{data.map((item, index) => { const value = Number(item[metric] || 0); return <div key={item.name} className="flex h-full flex-1 flex-col items-center justify-end gap-2"><span className="text-sm font-bold text-[#173b35]">{value.toLocaleString()}</span><div title={`${item.name}: ${value.toLocaleString()} enrollments`} className="w-full max-w-24 rounded-t-md bg-[#2f8068] transition-all" style={{ height: `${value ? Math.max(4, value / max * 100) : 0}%`, backgroundColor: colors[index % colors.length] }} /><span className="text-center text-sm font-semibold text-[#64736f]">{item.name}</span></div>; })}</div>; }
 function StatusPie({ approved, pending, rejected }) { const total = approved + pending + rejected; const approvedPct = total ? (approved / total) * 100 : 0; const pendingPct = total ? (pending / total) * 100 : 0; const rejectedPct = total ? (rejected / total) * 100 : 0; return <div className="flex items-center justify-center gap-5"><div className="h-32 w-32 rounded-full" style={{ background: total ? `conic-gradient(#2f7c57 0 ${approvedPct}%, #d28b32 ${approvedPct}% ${approvedPct + pendingPct}%, #c45d52 ${approvedPct + pendingPct}% ${approvedPct + pendingPct + rejectedPct}%)` : 'conic-gradient(#e2e8f0 0 100%)' }} aria-label="Enrollment status pie chart" role="img" /><div className="space-y-2 text-xs"><Legend color="#2f7c57" label="Approved" value={approved} /><Legend color="#d28b32" label="Pending" value={pending} /><Legend color="#c45d52" label="Rejected" value={rejected} /></div></div>; }
 function Legend({ color, label, value }) { return <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} /> <span>{label}</span><strong>{value}</strong></div>; }
-function RegionalAnalytics({ stats, metric, setMetric, onBack }) {
-  return <section id="regional" className="rounded-lg border border-[#e4ebe7] bg-white p-5 shadow-sm"><div className="mb-6 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-bold">Regional analytics</h2><p className="mt-1 text-sm text-[#64736f]">Enrollment readings across configured regions.</p></div><div className="flex items-center gap-2"><select value={metric} onChange={event => setMetric(event.target.value)} className={selectClass}><option value="total">Total enrollments</option><option value="approved">Approved enrollments</option></select><button type="button" onClick={onBack} className="inline-flex items-center gap-1 rounded border border-[#b5c9c1] px-3 py-2 text-xs font-semibold"><ArrowLeft size={14} /> Overview</button></div></div><RegionalBarGraph data={stats} metric={metric} /></section>;
+function RegionalAnalytics({ stats, onBack }) {
+  return <section id="regional" className="rounded-lg border border-[#e4ebe7] bg-white p-5 shadow-sm"><div className="mb-6 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-bold">Regional analytics</h2><p className="mt-1 text-sm text-[#64736f]">Total enrollments across Mahabubnagar, Ranga Reddy, and Hyderabad.</p></div><button type="button" onClick={onBack} className="inline-flex items-center gap-1 rounded border border-[#b5c9c1] px-3 py-2 text-xs font-semibold"><ArrowLeft size={14} /> Overview</button></div><RegionalBarGraph data={stats} metric="total" /></section>;
 }
 
