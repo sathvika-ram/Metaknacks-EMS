@@ -116,15 +116,32 @@ async function ensureSupabaseBucket(storage) {
 async function ensureVoterColumns() {
     await pool.query(`
         ALTER TABLE voters
-        ADD COLUMN IF NOT EXISTS notes TEXT,
-        ADD COLUMN IF NOT EXISTS complete_address TEXT,
+        ADD COLUMN IF NOT EXISTS coordinator_id BIGINT,
+        ADD COLUMN IF NOT EXISTS voter_name TEXT,
+        ADD COLUMN IF NOT EXISTS father_name TEXT,
+        ADD COLUMN IF NOT EXISTS mobile_number VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS constituency TEXT,
+        ADD COLUMN IF NOT EXISTS mandal TEXT,
+        ADD COLUMN IF NOT EXISTS village TEXT,
         ADD COLUMN IF NOT EXISTS degree_certificate_url TEXT,
         ADD COLUMN IF NOT EXISTS degree_certificate_urls TEXT[],
+        ADD COLUMN IF NOT EXISTS enrollment_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+        ADD COLUMN IF NOT EXISTS voter_id VARCHAR(10),
+        ADD COLUMN IF NOT EXISTS gender VARCHAR(30),
+        ADD COLUMN IF NOT EXISTS email VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS acknowledgement_number VARCHAR(32),
+        ADD COLUMN IF NOT EXISTS district TEXT,
+        ADD COLUMN IF NOT EXISTS pincode VARCHAR(6),
+        ADD COLUMN IF NOT EXISTS region TEXT,
+        ADD COLUMN IF NOT EXISTS notes TEXT,
+        ADD COLUMN IF NOT EXISTS complete_address TEXT,
         ADD COLUMN IF NOT EXISTS submission_key VARCHAR(120),
         ADD COLUMN IF NOT EXISTS surname VARCHAR(120),
         ADD COLUMN IF NOT EXISTS post_office VARCHAR(255),
         ADD COLUMN IF NOT EXISTS photo_url TEXT,
-        ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(12)
+        ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(12),
+        ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     `);
     await pool.query('ALTER TABLE voters ALTER COLUMN voter_id DROP NOT NULL');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile_number VARCHAR(20)');
@@ -159,6 +176,28 @@ async function ensureVoterColumns() {
             }
         }
     }
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS system_audits (
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT,
+            user_email TEXT,
+            action TEXT,
+            details JSONB NOT NULL DEFAULT '{}'::jsonb,
+            ip_address TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+    await pool.query(`
+        ALTER TABLE system_audits
+        ADD COLUMN IF NOT EXISTS id BIGSERIAL,
+        ADD COLUMN IF NOT EXISTS user_id BIGINT,
+        ADD COLUMN IF NOT EXISTS user_email TEXT,
+        ADD COLUMN IF NOT EXISTS action TEXT,
+        ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        ADD COLUMN IF NOT EXISTS ip_address TEXT,
+        ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    `);
+    await pool.query('CREATE INDEX IF NOT EXISTS system_audits_created_at_idx ON system_audits (created_at DESC)');
 }
 
 const safeVoterColumns = `
@@ -365,6 +404,7 @@ app.get('/api/health', async (req, res) => {
         const result = await pool.query('SELECT NOW()');
         res.json({ status: 'Connected to PostgreSQL successfully', time: result.rows[0].now });
     } catch (err) {
+        console.error('Database health check failed:', err.message, err.code);
         res.status(500).json({ error: 'Database connection failed' });
     }
 });
@@ -390,8 +430,8 @@ app.post('/api/auth/login', async (req, res) => {
             { expiresIn: '12h' }
         );
 
-            res.json({ message: 'Login successful', token, role: user.role, name: user.name, assigned_region: assignedRegion, assigned_constituency: user.assigned_constituency, assigned_mandal: user.assigned_mandal });
-            writeAudit(user.id, 'user_login', { role: user.role }, req);
+        await writeAudit(user.id, 'user_login', { role: user.role }, req);
+        res.json({ message: 'Login successful', token, role: user.role, name: user.name, assigned_region: assignedRegion, assigned_constituency: user.assigned_constituency, assigned_mandal: user.assigned_mandal });
     } catch (err) {
         res.status(500).json({ error: 'Server error during login' });
     }
@@ -446,7 +486,7 @@ app.post('/api/admin/create-coordinator', authenticateToken, requireRoles('super
              VALUES ($1, $2, $3, $4, 'constituency_coordinator', $5, $6, $7, $8, $9) RETURNING id, name, email, mobile_number, assigned_region, assigned_constituency, assigned_mandal, personal_email, agent_personal_email`,
             [normalizedName, coordinatorEmail, mobile_number, passwordHash, resolvedRegion, selectedConstituency, selectedMandal || null, personalEmail || null, personalEmail || null]
         );
-        writeAudit(req.user?.id, 'coordinator_created', { coordinator_id: newCoordinator.rows[0].id, assigned_constituency: selectedConstituency, assigned_mandal: selectedMandal }, req);
+        await writeAudit(req.user?.id, 'coordinator_created', { coordinator_id: newCoordinator.rows[0].id, assigned_constituency: selectedConstituency, assigned_mandal: selectedMandal }, req);
         res.status(201).json({ message: `Coordinator created. Login email: ${coordinatorEmail}`, coordinator: newCoordinator.rows[0] });
     } catch (err) {
         if (err.code === '23505') return res.status(409).json({ error: 'A coordinator already uses this generated login email.' });
@@ -561,10 +601,10 @@ app.post('/api/voters/enroll', authenticateToken, requireRoles('constituency_coo
         } finally {
             client.release();
         }
+        await writeAudit(req.user.id, 'voter_enrolled', { voter_id: newVoter.rows[0].id, constituency, mandal }, req);
         res.status(201).json({ message: 'Enrolled', voter: newVoter.rows[0] });
-            writeAudit(req.user.id, 'voter_enrolled', { voter_id: newVoter.rows[0].id, constituency, mandal }, req);
     } catch (err) {
-        console.error('Voter enrollment failed:', err);
+        console.error('Voter enrollment failed:', err.message, err.code);
         res.status(500).json({ error: 'Server error while processing voter enrollment' });
     }
 });
@@ -627,6 +667,7 @@ app.get('/api/admin/summary', authenticateToken, requireRoles('super_admin', 'pa
         ]);
         res.json({ metrics: { ...metrics.rows[0], active_coordinators: coordinators.rows[0].total }, regional_breakdown: regions.rows, daily_trend: trend.rows });
     } catch (err) {
+        console.error('Enrollment summary query failed:', err.message, err.code);
         res.status(500).json({ error: 'Unable to load enrollment summary.' });
     }
 });
@@ -691,7 +732,7 @@ app.post('/api/admin/coordinators/reset-password', authenticateToken, requireRol
             [passwordHash, email]
         );
         if (!result.rowCount) return res.status(404).json({ error: 'Coordinator account not found for that email.' });
-        writeAudit(req.user.id, 'coordinator_password_reset', { coordinator_id: result.rows[0].id }, req);
+        await writeAudit(req.user.id, 'coordinator_password_reset', { coordinator_id: result.rows[0].id }, req);
         res.json({ message: 'Password reset successfully.', email });
     } catch (error) {
         console.error('Coordinator password reset failed:', error.message);
@@ -731,9 +772,10 @@ app.patch('/api/admin/voters/:id/status', authenticateToken, requireRoles('super
         if (!['pending', 'in_progress', 'approved', 'rejected'].includes(enrollment_status)) return res.status(400).json({ error: 'Invalid enrollment status.' });
         const updatedVoter = await pool.query(`UPDATE voters SET enrollment_status = $1 WHERE id = $2 AND enrollment_status IN ('pending', 'in_progress') RETURNING *`, [enrollment_status, id]);
         if (!updatedVoter.rowCount) return res.status(409).json({ error: 'This enrollment status has already been finalized and cannot be changed.' });
+        await writeAudit(req.user?.id, 'voter_status_updated', { voter_id: id, enrollment_status }, req);
         res.json({ message: 'Updated', voter: updatedVoter.rows[0] });
-            writeAudit(req.user?.id, 'voter_status_updated', { voter_id: id, enrollment_status }, req);
     } catch (err) {
+        console.error('Voter status update failed:', err.message, err.code);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -744,6 +786,7 @@ app.get('/api/geo/regions', async (req, res) => {
         const result = await pool.query('SELECT DISTINCT "Region" AS region FROM master_geography WHERE "Region" IS NOT NULL ORDER BY "Region"');
         res.json(result.rows);
     } catch (err) {
+        console.error('Region lookup failed:', err.message, err.code);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -785,6 +828,7 @@ app.get('/api/geo/mandals', async (req, res) => {
             `);
             res.json({ logs: result.rows });
         } catch (err) {
+            console.error('Audit log fetch failed:', err.message, err.code);
             res.status(500).json({ error: 'Server error while fetching audit logs' });
         }
     });

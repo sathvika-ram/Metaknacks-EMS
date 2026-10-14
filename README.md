@@ -17,7 +17,7 @@ backend/    Express API, PostgreSQL schema, and backend scripts
 
 ## Fresh Database Setup
 
-Create a new PostgreSQL database or Supabase project. The current repository does not include an application-wide `backend/schema.sql`; set up the `users`, `voters`, and `system_audits` tables using the schema for this app before starting the API.
+Create a new PostgreSQL database or Supabase project. The current repository does not include an application-wide `backend/schema.sql`; set up the core `users` and `voters` tables using the schema for this app before starting the API. On startup, the API adds the voter columns it uses and creates the `system_audits` table. The geography table and its data must also be imported before using geography selectors and regional analytics.
 
 Create `public.master_geography` with the headers from the supplied geography CSV:
 
@@ -41,7 +41,7 @@ In PowerShell, from the project root, prepare the backend environment file witho
 if (-not (Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
 ```
 
-Set `DATABASE_URL`, a random `JWT_SECRET` of at least 32 characters, and the Supabase storage values in `backend/.env`. For Supabase, copy the Transaction Pooler URI from that project's **Connect** panel. Supabase pooler URLs using port `5432` are automatically routed through transaction mode on port `6543` by the backend. Keep the Supabase service-role key on the backend only.
+Set `DATABASE_URL`, a random `JWT_SECRET` of at least 32 characters, and the Supabase storage values in `backend/.env`. For Render or another hosted Node service, copy the **Session Pooler** URI from the project's **Connect** panel and keep its supplied host, username, and port (`5432`) unchanged. Keep the Supabase service-role key on the backend only.
 
 Open **Terminal 1**:
 
