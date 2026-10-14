@@ -567,8 +567,8 @@ app.post('/api/voters/enroll', authenticateToken, requireRoles('constituency_coo
             }
 
             const existingIdentifier = await client.query(
-                'SELECT voter_id, acknowledgement_number, application_id FROM voters WHERE voter_id = $1 OR acknowledgement_number = $2 OR application_id = $2 LIMIT 1',
-                [normalizedVoterId, normalizedAcknowledgementNumber]
+                'SELECT voter_id, acknowledgement_number, application_id FROM voters WHERE voter_id = $1 OR acknowledgement_number = $2 OR application_id = $3 LIMIT 1',
+                [normalizedVoterId, normalizedAcknowledgementNumber, normalizedAcknowledgementNumber]
             );
             if (existingIdentifier.rowCount) {
                 await client.query('ROLLBACK');
@@ -584,19 +584,20 @@ app.post('/api/voters/enroll', authenticateToken, requireRoles('constituency_coo
                 voter_id, aadhaar_number, gender, email, personal_email,
                 acknowledgement_number, application_id,
                 complete_address, district, pincode, region, notes, submission_key, post_office, photo_url
-            ) VALUES ($1, $2, $3, $4, $2, $4,
-                $5, $6, $6, $7,
-                $8, $8, $9, $10, 'pending',
-                $11, $12, $13, $14, COALESCE($14, ''),
-                $15, $15,
-                $16, $17, $18, $19, $20, $21, $22, $23)
+            ) VALUES ($1, $2, $3, $4, $5, $6,
+                $7, $8, $9, $10,
+                $11, $12, $13, $14, 'pending',
+                $15, $16, $17, $18, $19,
+                $20, $21,
+                $22, $23, $24, $25, $26, $27, $28, $29)
             RETURNING id, coordinator_id, voter_name, surname, voter_id, enrollment_status, constituency, mandal, village, created_at`,
             [
                 numericCoordinatorId, normalizedName, normalizedSurname || null, normalizedFatherName,
-                mobile_number, constituency, mandal,
-                village, primaryDocumentUrl, documentUrls,
-                normalizedVoterId || null, normalizedAadhaarNumber || null, gender, voterEmail,
-                normalizedAcknowledgementNumber,
+                normalizedName, normalizedFatherName,
+                mobile_number, constituency, constituency, mandal,
+                village, village, primaryDocumentUrl, documentUrls,
+                normalizedVoterId || null, normalizedAadhaarNumber || null, gender, voterEmail, voterEmail || '',
+                normalizedAcknowledgementNumber, normalizedAcknowledgementNumber,
                 normalizedCompleteAddress, district, normalizedPincode || null, region, notes, submissionKey,
                 post_office ? String(post_office).trim() : null, photo_url || null
             ]
